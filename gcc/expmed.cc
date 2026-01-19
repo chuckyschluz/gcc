@@ -4219,7 +4219,227 @@ expand_sdiv_pow2 (scalar_int_mode mode, rtx op0, HOST_WIDE_INT d)
   emit_label (label);
   return expand_shift (RSHIFT_EXPR, mode, temp, logd, NULL_RTX, 0);
 }
-
+
+static rtx_insn *
+gen_udiv_using_mul (rtx op0, rtx target, rtx *result, scalar_int_mode int_mode,
+		    unsigned HOST_WIDE_INT mh, unsigned HOST_WIDE_INT ml,
+		    int pre_shift, int post_shift)
+{
+  *result = NULL_RTX;
+
+  if (mh)
+    {
+      if (post_shift - 1 >= BITS_PER_WORD)
+	return NULL;
+
+      start_sequence ();
+      rtx t1 = expmed_mult_highpart (int_mode, op0, gen_int_mode (ml, int_mode),
+				     NULL_RTX, 1, MAX_COST);
+      if (t1 == NULL_RTX)
+	{
+	  end_sequence ();
+	  return NULL;
+	}
+      rtx t2 = force_operand (gen_rtx_MINUS (int_mode, op0, t1), NULL_RTX);
+      rtx t3 = expand_shift (RSHIFT_EXPR, int_mode, t2, 1, NULL_RTX, 1);
+      rtx t4 = force_operand (gen_rtx_PLUS (int_mode, t1, t3), NULL_RTX);
+      *result
+	= expand_shift (RSHIFT_EXPR, int_mode, t4, post_shift - 1, target, 1);
+      return end_sequence ();
+    }
+  else
+    {
+      if (pre_shift >= BITS_PER_WORD || post_shift >= BITS_PER_WORD)
+	return NULL;
+
+      start_sequence ();
+      rtx t1
+	= expand_shift (RSHIFT_EXPR, int_mode, op0, pre_shift, NULL_RTX, 1);
+      rtx t2 = expmed_mult_highpart (int_mode, t1, gen_int_mode (ml, int_mode),
+				     NULL_RTX, 1, MAX_COST);
+      if (t2 == NULL_RTX)
+	{
+	  end_sequence ();
+	  return NULL;
+	}
+      *result = expand_shift (RSHIFT_EXPR, int_mode, t2, post_shift, target, 1);
+      return end_sequence ();
+    }
+}
+
+static rtx_insn *
+gen_udiv_using_mul_wide (rtx op0, rtx target, rtx *result,
+			 scalar_int_mode int_mode, unsigned HOST_WIDE_INT mh,
+			 unsigned HOST_WIDE_INT ml, int pre_shift,
+			 int post_shift)
+{
+  *result = NULL_RTX;
+  if (mh && pre_shift)
+    return NULL;
+
+  int size = GET_MODE_BITSIZE (int_mode);
+  scalar_int_mode wider_mode;
+  if (GET_MODE_WIDER_MODE (int_mode).exists (&wider_mode)
+      && can_implement_p (smul_optab, wider_mode)
+      && can_implement_p (lshr_optab, wider_mode)
+      && (size + post_shift < GET_MODE_BITSIZE (wider_mode)))
+    {
+      start_sequence ();
+      rtx op0_preshift
+	= expand_shift (RSHIFT_EXPR, int_mode, op0, pre_shift, NULL_RTX, 1);
+      rtx op0_wide = convert_modes (wider_mode, int_mode, op0_preshift, 1);
+      rtx m_rtx
+	= immed_wide_int_const (wi::uhwi (ml, GET_MODE_PRECISION (wider_mode)),
+				wider_mode);
+      rtx t1_wide = expand_binop (wider_mode, smul_optab, op0_wide, m_rtx,
+				  NULL_RTX, 1, OPTAB_DIRECT);
+      if (t1_wide == NULL_RTX)
+	{
+	  end_sequence ();
+	  return NULL;
+	}
+      rtx t2_wide
+	= expand_shift (RSHIFT_EXPR, wider_mode, t1_wide, size, NULL_RTX, 1);
+      rtx t3_wide = mh ? expand_binop (wider_mode, add_optab, op0_wide, t2_wide,
+				       NULL_RTX, 1, OPTAB_DIRECT)
+		       : t2_wide;
+      rtx t4_wide = expand_shift (RSHIFT_EXPR, wider_mode, t3_wide, post_shift,
+				  NULL_RTX, 1);
+      if (target != NULL_RTX)
+	{
+	  convert_move (target, t4_wide, 1);
+	  *result = target;
+	}
+      else
+	{
+	  *result = convert_modes (int_mode, wider_mode, t4_wide, 1);
+	}
+      return end_sequence ();
+    }
+
+  return NULL;
+}
+
+/* Expand unsigned division of OP0 by d using INT_MODE or WIDE_MODE, whichever
+is better.
+
+The standard Granlund-Montgomery unsigned multiplify-shift seqence involves
+the product of OP0 (SIZE-bits) and MH:ML (SIZE+1-bits), where MH is either 1
+or 0. For clarity, the PRE_SHIFT term is omitted without loss of generality.
+
+  QUOTIENT = (MH:ML * OP0) >> (SIZE + POST_SHIFT)
+
+After distributing the product:
+
+  QUOTIENT = ((MH * OP0) + A) >> POST_SHIFT, where
+  A = (ML * OP) >> SIZE
+
+If MH == 1, the sequence involves an intermediate sum that may overflow:
+
+  QUOTIENT = (OP0 + A) >> POST_SHIFT
+
+The overflow is handled with the following transformation:
+
+  (OP0 + A) >> 1 = A + (OP0 - A) >> 1
+
+After distributing the shift, the INT_MODE sequence is:
+
+  QUOTIENT = (A + (OP0 - A) >> 1) >> (POST_SHIFT - 1)
+
+If WIDE_MODE is available, the sum can be computed directly:
+
+  QUOTIENT = (A + OP0) >> POST_SHIFT
+
+If MH == 0, there is no intermediate sum.
+
+  QUOTIENT = A >> POST_SHIFT
+
++-----------------+----------------------------+-----------------------------+
+| MH \ Mode       |          INT_MODE          |         WIDE_MODE           |
++-----------------+----------------------------+-----------------------------+
+| MH = 0          | Q = A >> POST_SHIFT        | Q = A >> POST_SHIFT         |
++-----------------+----------------------------+-----------------------------+
+| MH = 1          | B = A + (OP0 - A) >> 1     | Q = (A + OP0) >> POST_SHIFT |
+|                 | Q = B >> (POST_SHIFT - 1)  |                             |
++-----------------+----------------------------+-----------------------------+
+
+If PRE_SHIFT > 0, which is only applicable when MH == 0, the WIDE_MODE sequence
+conveys no benefit over the INT_MODE sequence.
+
+*/
+
+static rtx
+expand_udiv_using_mult (rtx op0, rtx target, scalar_int_mode int_mode,
+			unsigned HOST_WIDE_INT d, int max_cost)
+{
+  bool speed = optimize_insn_for_speed_p ();
+  int size = GET_MODE_BITSIZE (int_mode);
+  unsigned HOST_WIDE_INT mh;
+  unsigned HOST_WIDE_INT ml;
+  int post_shift;
+  int pre_shift;
+
+  /* Find a suitable multiplier and right shift count instead of directly
+   * dividing by D.  */
+
+  mh = choose_multiplier (d, size, size, &ml, &post_shift);
+
+  /* If the suggested multiplier is more than SIZE bits, we can do better for
+   * even divisors, using an initial right shift.  */
+
+  if (mh != 0 && (d & 1) == 0)
+    {
+      pre_shift = ctz_or_zero (d);
+      mh = choose_multiplier (d >> pre_shift, size, size - pre_shift, &ml,
+			      &post_shift);
+      gcc_assert (!mh);
+    }
+  else
+    pre_shift = 0;
+
+  /* Expand the quotient using INT_MODE and WIDE_MODE and choose the sequence
+   * with the lowest cost. */
+
+  rtx int_mode_result = NULL_RTX;
+  rtx_insn *int_mode_seq
+    = gen_udiv_using_mul (op0, target, &int_mode_result, int_mode, mh, ml,
+			  pre_shift, post_shift);
+
+  rtx wide_mode_result = NULL_RTX;
+  rtx_insn *wide_mode_seq
+    = gen_udiv_using_mul_wide (op0, target, &wide_mode_result, int_mode, mh, ml,
+			       pre_shift, post_shift);
+
+  rtx result = NULL_RTX;
+  rtx_insn *seq = NULL;
+  int cost = max_cost;
+
+  if (int_mode_seq != NULL)
+    {
+      int int_mode_cost = seq_cost (int_mode_seq, speed);
+      if (int_mode_cost <= cost)
+	{
+	  result = int_mode_result;
+	  seq = int_mode_seq;
+	  cost = int_mode_cost;
+	}
+    }
+  if (wide_mode_seq != NULL)
+    {
+      int wide_mode_cost = seq_cost (wide_mode_seq, speed);
+      if (wide_mode_cost <= cost)
+	{
+	  result = wide_mode_result;
+	  seq = wide_mode_seq;
+	}
+    }
+
+  if (seq != NULL)
+    emit_insn (seq);
+
+  return result;
+}
+
 /* Emit the code to divide OP0 by OP1, putting the result in TARGET
    if that is convenient, and returning where the result is.
    You may request either the quotient or the remainder as the result;
@@ -4469,14 +4689,12 @@ expand_divmod (int rem_flag, enum tree_code code, machine_mode mode,
 	    int size = GET_MODE_BITSIZE (int_mode);
 	    if (unsignedp)
 	      {
-		unsigned HOST_WIDE_INT mh, ml;
-		int pre_shift, post_shift;
 		wide_int wd = rtx_mode_t (op1, int_mode);
 		unsigned HOST_WIDE_INT d = wd.to_uhwi ();
 
 		if (wi::popcount (wd) == 1)
 		  {
-		    pre_shift = floor_log2 (d);
+		    int pre_shift = floor_log2 (d);
 		    if (rem_flag)
 		      {
 			unsigned HOST_WIDE_INT mask
@@ -4502,77 +4720,12 @@ expand_divmod (int rem_flag, enum tree_code code, machine_mode mode,
 		      }
 		    else
 		      {
-			/* Find a suitable multiplier and right shift count
-			   instead of directly dividing by D.  */
-			mh = choose_multiplier (d, size, size,
-						&ml, &post_shift);
+			quotient
+			  = expand_udiv_using_mult (op0, tquotient, int_mode, d,
+						    max_cost);
 
-			/* If the suggested multiplier is more than SIZE bits,
-			   we can do better for even divisors, using an
-			   initial right shift.  */
-			if (mh != 0 && (d & 1) == 0)
-			  {
-			    pre_shift = ctz_or_zero (d);
-			    mh = choose_multiplier (d >> pre_shift, size,
-						    size - pre_shift,
-						    &ml, &post_shift);
-			    gcc_assert (!mh);
-			  }
-			else
-			  pre_shift = 0;
-
-			if (mh != 0)
-			  {
-			    rtx t1, t2, t3, t4;
-
-			    if (post_shift - 1 >= BITS_PER_WORD)
-			      goto fail1;
-
-			    extra_cost
-			      = (shift_cost (speed, int_mode, post_shift - 1)
-				 + shift_cost (speed, int_mode, 1)
-				 + 2 * add_cost (speed, int_mode));
-			    t1 = expmed_mult_highpart
-			      (int_mode, op0, gen_int_mode (ml, int_mode),
-			       NULL_RTX, 1, max_cost - extra_cost);
-			    if (t1 == 0)
-			      goto fail1;
-			    t2 = force_operand (gen_rtx_MINUS (int_mode,
-							       op0, t1),
-						NULL_RTX);
-			    t3 = expand_shift (RSHIFT_EXPR, int_mode,
-					       t2, 1, NULL_RTX, 1);
-			    t4 = force_operand (gen_rtx_PLUS (int_mode,
-							      t1, t3),
-						NULL_RTX);
-			    quotient = expand_shift
-			      (RSHIFT_EXPR, int_mode, t4,
-			       post_shift - 1, tquotient, 1);
-			  }
-			else
-			  {
-			    rtx t1, t2;
-
-			    if (pre_shift >= BITS_PER_WORD
-				|| post_shift >= BITS_PER_WORD)
-			      goto fail1;
-
-			    t1 = expand_shift
-			      (RSHIFT_EXPR, int_mode, op0,
-			       pre_shift, NULL_RTX, 1);
-			    extra_cost
-			      = (shift_cost (speed, int_mode, pre_shift)
-				 + shift_cost (speed, int_mode, post_shift));
-			    t2 = expmed_mult_highpart
-			      (int_mode, t1,
-			       gen_int_mode (ml, int_mode),
-			       NULL_RTX, 1, max_cost - extra_cost);
-			    if (t2 == 0)
-			      goto fail1;
-			    quotient = expand_shift
-			      (RSHIFT_EXPR, int_mode, t2,
-			       post_shift, tquotient, 1);
-			  }
+			if (!quotient)
+			  goto fail1;
 		      }
 		  }
 		else		/* Too wide mode to use tricky code */
