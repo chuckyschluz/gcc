@@ -1457,7 +1457,7 @@ See RS/6000 and PowerPC Options.
 
 @emph{Solaris 2 Options} (@ref{Solaris 2 Options})
 @gccoptlist{-mclear-hwcap  -mno-clear-hwcap  -mimpure-text  -mno-impure-text
--gsctf  -pthread  -pthreads}
+-gsctf}
 
 @emph{SPARC Options} (@ref{SPARC Options})
 @gccoptlist{-mcpu=@var{cpu-type}
@@ -4563,6 +4563,7 @@ another handler, which can point out a wrong ordering of exception handlers.
 
 @opindex Wsfinae-incomplete
 @opindex Wno-sfinae-incomplete
+@item -Wsfinae-incomplete @r{(C++ and Objective-C++ only)}
 Warn about a class that is found to be incomplete, or a function with
 auto return type that has not yet been deduced, in a context where
 that causes substitution failure rather than an error, and then the
@@ -5506,7 +5507,7 @@ A size can be omitted, to use a target-specific default value.
 @cindex OpenMP parallel
 @item -fopenmp
 Enable handling of OpenMP directives @samp{#pragma omp},
-@samp{[[omp::directive(...)]]}, @samp{[[omp::decl(...)]]},
+@samp{[[omp::decl(...)]]}, @samp{[[omp::directive(...)]]},
 and @samp{[[omp::sequence(...)]]} in C/C++.  In Fortran, it enables
 @samp{!$omp} and the conditional compilation sentinel @samp{!$}.
 In fixed source form Fortran, the sentinels can also start with
@@ -18209,6 +18210,9 @@ the discovery is aborted.
 
 @item ix86-vect-unroll-limit
 Limit how much the autovectorizer may unroll a loop.
+
+@item ix86-vect-compare-costs
+Whether x86 vectorizer cost modeling compares costs of different vector sizes.
 
 @end table
 
@@ -34169,7 +34173,8 @@ GNU/Linux for S/390 ABI@.  When @option{-m64} is specified, generate
 code compliant to the GNU/Linux for zSeries ABI@.  This allows GCC in
 particular to generate 64-bit instructions.  For the @samp{s390}
 targets, the default is @option{-m31}, while the @samp{s390x}
-targets default to @option{-m64}.
+targets default to @option{-m64}.  Note, @option{-m31} is deprecated and
+support will be removed.
 
 @opindex mzarch
 @opindex mesa
@@ -34970,17 +34975,6 @@ Generate Solaris CTF.  Needs to be used both for compilation and
 linking.  See @command{ctf(7)} for more information.  This is only
 supported since Solaris 11.4 SRU 84 where the necessary toolchain
 support was added.
-
-@opindex pthread
-@opindex pthreads
-@item -pthread
-@itemx -pthreads
-On Solaris targets, these both options define the preprocessor symbols
-@code{_REENTRANT} and @code{_PTHREADS}.  In modern versions of Solaris
-these symbols are no longer used in system headers and these options are
-unnecessary unless user code references them.  Additionally, since
-POSIX thread support is provided directly by the Solaris C library, it is
-not necessary to use @option{-pthread} for linking.
 @end table
 
 @node SPARC Options

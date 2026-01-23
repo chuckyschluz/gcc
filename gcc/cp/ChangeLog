@@ -1,3 +1,147 @@
+2026-01-22  Marek Polacek  <polacek@redhat.com>
+
+	* reflect.cc (class_members_of): Update a comment to mention
+	finish_member_declaration.
+
+2026-01-22  Marek Polacek  <polacek@redhat.com>
+	    Jason Merrill  <jason@redhat.com>
+
+	* reflect.cc (type_linkage_name): Rename to...
+	(reflection_type_linkage_name): ...this.
+	(eval_has_internal_linkage): Call reflection_type_linkage_name instead
+	of type_linkage_name.
+	(eval_has_module_linkage): Likewise.
+	(eval_has_external_linkage): Likewise.
+	(eval_has_c_language_linkage): Likewise.
+	(eval_has_linkage): Likewise.
+
+2026-01-22  Marek Polacek  <polacek@redhat.com>
+
+	* class.cc (user_provided_p): Return false for a deleted
+	namespace-scope function.
+	* reflect.cc (eval_is_user_provided): Don't check
+	DECL_NAMESPACE_SCOPE_P or DECL_DELETED_FN.
+
+2026-01-21  Marek Polacek  <polacek@redhat.com>
+
+	* cp-tree.h (maybe_get_first_fn): Declare.
+	* reflect.cc (maybe_get_reflection_fndecl): Remove.
+	(eval_is_function): Call maybe_get_first_fn instead of
+	maybe_get_reflection_fndecl.
+	(eval_is_function_template): Likewise.
+	(eval_is_class_member): Likewise.
+	(eval_is_expected_access): Likewise.
+	(eval_is_virtual): Likewise.
+	(eval_is_pure_virtual): Likewise.
+	(eval_is_override): Likewise.
+	(eval_is_namespace_member): Likewise.
+	(eval_is_static_member): Likewise.
+	(eval_is_deleted): Likewise.
+	(eval_is_defaulted): Likewise.
+	(eval_is_user_provided): Likewise.
+	(eval_is_user_declared): Likewise.
+	(eval_is_explicit): Likewise.
+	(eval_has_internal_linkage): Likewise.
+	(eval_has_module_linkage): Likewise.
+	(eval_has_external_linkage): Likewise.
+	(eval_has_c_language_linkage): Likewise.
+	(eval_has_linkage): Likewise.
+	(eval_is_operator_function): Likewise.
+	(eval_is_destructor): Likewise.
+	(eval_is_conversion_function_template): Likewise.
+	(eval_is_operator_function_template): Likewise.
+	(eval_is_constructor_template): Likewise.
+	(eval_operator_of): Likewise.
+	(eval_is_noexcept): Likewise.
+	(eval_has_parent): Likewise.
+	(eval_parent_of): Likewise.
+	(eval_parameters_of): Likewise.
+	(eval_has_identifier): Likewise.
+	(eval_identifier_of): Likewise.
+	(eval_is_final): Likewise.
+	(eval_is_accessible): Likewise.
+	(compare_reflections): Likewise.
+	(reflection_mangle_prefix): Likewise.
+	* tree.cc (maybe_get_fns): Use NULL_TREE instead of NULL.
+	(maybe_get_first_fn): New.
+
+2026-01-21  Marek Polacek  <polacek@redhat.com>
+
+	* mangle.cc (is_std_substitution): Return false for any _DECL except
+	TYPE_DECL and DECL_CLASS_TEMPLATE_P.  Verify that we don't return false
+	for something that used to yield true.  Use NULL_TREE instead of NULL.
+
+2026-01-21  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/123692
+	* class.cc (build_base_path): Don't call resolves_to_fixed_type_p if
+	uneval.
+
+2026-01-21  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/123677
+	* constexpr.cc (cxx_eval_store_expression): Only clear
+	CONSTRUCTOR_ELTS (*valp) if *valp is CONSTRUCTOR.
+
+2026-01-20  Patrick Palka  <ppalka@redhat.com>
+
+	PR c++/123601
+	* tree.cc (build_min_non_dep_op_overload): Relax
+	COMPARISON_CLASS_P assert to accept SPACESHIP_EXPR too.
+
+2026-01-20  Marek Polacek  <polacek@redhat.com>
+
+	* reflect.cc (get_range_elts): Add comment for TARGET_EXPR stripping.
+	(get_vector_of_info_elts): Likewise.
+
+2026-01-20  Marek Polacek  <polacek@redhat.com>
+
+	* decl2.cc (min_vis_expr_r): For _DECLs with no linkage refer to the
+	linkage of the containing entity that does have a name with linkage.
+
+2026-01-19  Jakub Jelinek  <jakub@redhat.com>
+
+	* metafns.gperf: Add "" as second operand of 2 static_asserts.
+	* metafns.h: Regenerate.
+
+2026-01-18  Marek Polacek  <polacek@redhat.com>
+
+	* reflect.cc (get_reflection): Adjust the error message for the
+	is_capture_proxy check.
+
+2026-01-18  Marek Polacek  <polacek@redhat.com>
+
+	* cp-tree.h (direct_base_parent): Rename to...
+	(direct_base_derived): ...this.
+	* decl2.cc (min_vis_expr_r): Call direct_base_derived instead of
+	direct_base_parent.
+	* pt.cc (iterative_hash_template_arg): Likewise.
+	* reflect.cc (direct_base_parent_binfo): Rename to...
+	(direct_base_derived_binfo): ...this.
+	(direct_base_parent): Rename to...
+	(direct_base_derived): ...this.
+	(eval_is_expected_access): Call direct_base_derived_binfo instead
+	of direct_base_parent_binfo.
+	(eval_source_location_of): Call direct_base_derived instead of
+	direct_base_parent.
+	(eval_parent_of): Likewise.
+	(eval_offset_of): Likewise.
+	(eval_display_string_of): Likewise.
+	(eval_annotations_of): Call direct_base_derived_binfo instead
+	of direct_base_parent_binfo.
+	(eval_is_accessible): Call direct_base_derived instead of
+	direct_base_parent.
+
+2026-01-18  Marek Polacek  <polacek@redhat.com>
+
+	* reflect.cc (check_splice_expr): Use context_for_name_lookup.
+
+2026-01-18  Simon Martin  <simon@nasilyan.com>
+
+	PR c++/122391
+	* tree.cc (decl_linkage): Return lk_none for TYPE_DECLs with
+	erroneous type.
+
 2026-01-17  Nathaniel Shead  <nathanieloshead@gmail.com>
 
 	PR c++/123627

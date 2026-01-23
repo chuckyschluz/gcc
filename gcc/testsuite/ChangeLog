@@ -1,3 +1,350 @@
+2026-01-22  Hans-Peter Nilsson  <hp@axis.com>
+
+	* g++.dg/guality/guality.exp, gcc.dg/guality/guality.exp,
+	gcc.dg/simulate-thread/simulate-thread.exp,
+	g++.dg/simulate-thread/simulate-thread.exp,
+	gfortran.dg/guality/guality.exp: Exit early for simulators.
+
+2026-01-22  Richard Earnshaw  <rearnsha@arm.com>
+
+	PR target/123742
+	* gcc.target/arm/neon-smax16.c: New test.
+	* gcc.target/arm/neon-smin16.c: New test.
+
+2026-01-22  Richard Biener  <rguenther@suse.de>
+
+	PR tree-optimization/123741
+	* gfortran.dg/vect/vect-pr123741.f90: New testcase.
+
+2026-01-22  Jakub Jelinek  <jakub@redhat.com>
+
+	PR tree-optimization/123753
+	* gcc.c-torture/execute/pr123753.c: New test.
+
+2026-01-22  Robin Dapp  <rdapp@oss.qualcomm.com>
+
+	PR tree-optimization/123731
+	* gcc.dg/vect/pr123731.c: New test.
+
+2026-01-22  Robin Dapp  <rdapp@oss.qualcomm.com>
+
+	PR target/122869
+	* gcc.target/riscv/rvv/base/pr122656-1.c: Remove dg-error.
+	* gcc.target/riscv/rvv/vsetvl/ffload-3.c: XFAIL for -O2 and -O3.
+	* gcc.target/riscv/rvv/base/pr122869.c: New test.
+
+2026-01-22  Richard Biener  <rguenther@suse.de>
+
+	PR tree-optimization/123755
+	* gcc.dg/vect/vect-pr123755.c: New testcase.
+
+2026-01-22  Richard Biener  <rguenther@suse.de>
+
+	PR tree-optimization/123756
+	* gcc.dg/vect/vect-pr123756.c: New testcase.
+
+2026-01-22  Andrew Pinski  <andrew.pinski@oss.qualcomm.com>
+
+	PR testsuite/123751
+	* gcc.dg/tree-ssa/pr46555.c: Disable for arm thumb1.
+
+2026-01-22  Alejandro Colomar  <alx@kernel.org>
+
+	* gcc.dg/maxof-compile.c (quals): New test.
+
+2026-01-22  David Malcolm  <dmalcolm@redhat.com>
+
+	PR diagnostics/122622
+	* sarif-replay.dg/2.1.0-valid/missing-source-pr122622-check-html.py:
+	New test script.
+	* sarif-replay.dg/2.1.0-valid/missing-source-pr122622.sarif: New
+	test.
+	* sarif-replay.dg/2.1.0-valid/spec-example-4.sarif: Update
+	expected output to reflect showing event locations and text.
+	* sarif-replay.dg/2.1.0-valid/tutorial-example.sarif: Likewise.
+
+2026-01-22  Andrew Pinski  <andrew.pinski@oss.qualcomm.com>
+
+	PR tree-optimization/123745
+	* gcc.dg/torture/pr123745-1.c: New test.
+
+2026-01-21  David Malcolm  <dmalcolm@redhat.com>
+
+	* c-c++-common/analyzer/flex-without-call-summaries.c: Skip on
+	C++98 and tweak xfails to reflect slight differences in where
+	we hit exploration limits.
+	* c-c++-common/analyzer/raw-data-cst-pr117262-1.c: Add params to
+	force full exploration of the loop.
+	* gcc.dg/analyzer/pr93355-localealias.c (read_alias_file): Drop
+	xfail.
+
+2026-01-21  David Malcolm  <dmalcolm@redhat.com>
+
+	* c-c++-common/analyzer/aliasing-4.c: New test.
+	* c-c++-common/analyzer/aliasing-5.c: New test.
+
+2026-01-21  Stefan Schulze Frielinghaus  <stefansf@gcc.gnu.org>
+
+	PR target/122781
+	* gcc.target/s390/vxe3/vcmp-1.c: New test.
+
+2026-01-21  Jakub Jelinek  <jakub@redhat.com>
+
+	PR middle-end/123744
+	* gcc.target/i386/avx512bw-pr123744.c: New test.
+
+2026-01-21  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/123692
+	* g++.dg/cpp0x/pr123692.C: New test.
+
+2026-01-21  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/123677
+	* g++.dg/cpp2a/pr123677.C: New test.
+
+2026-01-21  Eric Botcazou  <ebotcazou@adacore.com>
+
+	* gnat.dg/generic_inst16.adb: New test.
+	* gnat.dg/generic_inst16_pkg.ads: New helper.
+	* gnat.dg/generic_inst16_pkg-child.ads: Likewise.
+	* gnat.dg/generic_inst16_pkg-child-grandchild.ads: Likewise.
+	* gnat.dg/generic_inst16_proc.ads: Likewise.
+	* gnat.dg/generic_inst16_proc.adb: Likewise.
+
+2026-01-21  Alexandre Oliva  <oliva@adacore.com>
+
+	PR tree-optimization/113524
+	* gcc.dg/torture/pr113026-1.c: XFAIL bogus warning on various
+	32-bit targets.
+
+2026-01-21  Alexandre Oliva  <oliva@adacore.com>
+
+	* gcc.target/arm/thumb2-pop-loreg.c: Enable -mthumb.
+
+2026-01-21  Alexandre Oliva  <oliva@adacore.com>
+
+	* gcc.target/arm/simd/bf16_vstn_1.c: Adjust expectations for
+	code improved by late-combine.
+
+2026-01-21  Alexandre Oliva  <oliva@adacore.com>
+
+	* g++.dg/tree-ssa/cxa_atexit-1.C: Enable -fuse-cxa-atexit.
+	* g++.dg/tree-ssa/cxa_atexit-2.C: Likewise.
+	* g++.dg/tree-ssa/cxa_atexit-3.C: Likewise.
+	* g++.dg/tree-ssa/cxa_atexit-4.C: Likewise.
+	* g++.dg/tree-ssa/cxa_atexit-5.C: Likewise.
+	* g++.dg/tree-ssa/cxa_atexit-6.C: Likewise.
+
+2026-01-21  Alexandre Oliva  <oliva@adacore.com>
+
+	* g++.dg/modules/pr98893_b.C: Require and enable cxa_atexit.
+
+2026-01-21  Alexandre Oliva  <oliva@adacore.com>
+
+	* g++.dg/lto/pr62026_0.C: Silence -flinker-output warning.
+
+2026-01-21  Alexandre Oliva  <oliva@adacore.com>
+
+	* g++.dg/abi/abi-tag18a.C: Require and enable cxa_atexit.
+
+2026-01-21  Alexandre Oliva  <oliva@adacore.com>
+
+	* g++.dg/DRs/dr2836.C: Skip if ! hostedlib.
+	* g++.dg/alias-checks.C: Likewise.
+	* g++.dg/contracts/pr116490.C: Likewise.
+	* g++.dg/coroutines/torture/pr121219.C: Likewise.
+	* g++.dg/cpp2a/constexpr-vector1.C: Likewise.
+	* g++.dg/ext/is_virtual_base_of.C: Likewise.
+	* g++.dg/modules/contracts-5_b.C: Likewise.
+	* g++.dg/modules/gmf-xtreme.C: Likewise.
+	* g++.dg/modules/lto-3_a.H: Likewise.
+	* g++.dg/modules/lto-3_b.C: Likewise.
+	* g++.dg/modules/xtreme-header-8.C: Likewise.
+	* g++.dg/opt/pr119274.C: Likewise.
+	* g++.dg/pr117222.C: Likewise.
+	* g++.dg/torture/pr105769-1.C: Likewise.
+	* g++.dg/torture/pr118521.C: Likewise.
+	* g++.dg/tree-ssa/deque-1.C: Likewise.
+	* g++.dg/tree-ssa/deque-2.C: Likewise.
+	* g++.dg/tree-ssa/pr109442.C: Likewise.
+	* g++.dg/tree-ssa/pr110819.C: Likewise.
+	* g++.dg/tree-ssa/pr116868.C: Likewise.
+	* g++.dg/tree-ssa/pr58483.C: Likewise.
+	* g++.dg/tree-ssa/pr80331.C: Likewise.
+	* g++.dg/tree-ssa/pr87502.C: Likewise.
+	* g++.dg/tree-ssa/pr96945.C: Likewise.
+	* g++.dg/tree-ssa/string-1.C: Likewise.
+
+2026-01-21  Alexandre Oliva  <oliva@adacore.com>
+
+	* gcc.target/aarch64/acle/fp8-helpers-neon.c: Silence
+	warnings about _Static_assert.
+
+2026-01-21  Alexandre Oliva  <oliva@adacore.com>
+
+	* gcc.dg/tree-ssa/ldexp.c: Require HAVE_C99_RUNTIME to test
+	ldexpf and ldexpl.
+
+2026-01-21  Alexandre Oliva  <oliva@adacore.com>
+
+	* gcc.dg/dfp/c23-decimal64x-1.c: Drop the explicit dg-do run.
+	* gcc.dg/dfp/c23-decimal64x-3.c: Likewise.
+
+2026-01-20  Jeff Law  <jeffrey.law@oss.qualcomm.com>
+
+	PR rtl-optimization/123380
+	* gcc.target/riscv/pr123380.c: New test.
+
+2026-01-20  Jeff Law  <jeffrey.law@oss.qualcomm.com>
+
+	PR target/123626
+	* gcc.target/riscv/rvv/base/pr123626.c: New test.
+
+2026-01-20  Patrick Palka  <ppalka@redhat.com>
+
+	PR c++/123601
+	* g++.dg/lookup/operator-9.C: New test.
+
+2026-01-20  Andrew MacLeod  <amacleod@redhat.com>
+
+	PR tree-optimization/123314
+	* gcc.dg/pr123314.c: New.
+
+2026-01-20  Vladimir N. Makarov  <vmakarov@redhat.com>
+
+	PR rtl-optimization/122215
+	* sparseset.supp: New.
+
+2026-01-20  David Malcolm  <dmalcolm@redhat.com>
+
+	PR sarif-replay/123056
+	* sarif-replay.dg/2.1.0-valid/3.11.6-embedded-links-pr123056.sarif: New test.
+	* sarif-replay.dg/2.1.0-valid/embedded-links-pr123056-check-html.py:
+	New test script.
+	* sarif-replay.dg/2.1.0-valid/embedded-links-pr123056-check-sarif-roundtrip.py:
+	New test script.
+
+2026-01-20  Jakub Jelinek  <jakub@redhat.com>
+
+	PR c++/123694
+	* g++.dg/cpp26/expansion-stmt28.C: New test.
+
+2026-01-20  Alfie Richards  <alfie.richards@arm.com>
+
+	PR middle-end/123697
+	* gcc.target/aarch64/sve/pr123697.c: New test.
+
+2026-01-20  Jakub Jelinek  <jakub@redhat.com>
+
+	PR target/123724
+	* g++.dg/opt/pr123724.C: New test.
+
+2026-01-20  Marek Polacek  <polacek@redhat.com>
+
+	* g++.dg/reflect/visibility1.C: Adjust dg-final.
+
+2026-01-20  Roger Sayle  <roger@nextmovesoftware.com>
+
+	PR rtl-optimization/123585
+	* gcc.target/i386/pr123585.c: New test case.
+
+2026-01-20  Kyrylo Tkachov  <ktkachov@nvidia.com>
+
+	PR target/123584
+	* gcc.target/aarch64/torture/xar-zero.c: New test.
+
+2026-01-20  Richard Biener  <rguenther@suse.de>
+
+	PR middle-end/123697
+	* gcc.dg/vect/vect-pr123697.c: New testcase.
+
+2026-01-20  Jakub Jelinek  <jakub@redhat.com>
+
+	* gcc.misc-tests/help.exp: Check for descriptions without terminating
+	dot or semicolon also for objc, objc++, rust, modula-2, cobol and
+	algol68.
+
+2026-01-20  Richard Biener  <rguenther@suse.de>
+
+	PR tree-optimization/123729
+	* g++.dg/torture/pr123729.C: New testcase.
+
+2026-01-19  Jeff Law  <jeffrey.law@oss.qualcomm.com>
+
+	PR rtl-optimization/121787
+	* gcc.target/riscv/pr121787-1.c: New test.
+	* gcc.target/riscv/pr121787-2.c: New test.
+
+2026-01-19  Joseph Myers  <josmyers@redhat.com>
+
+	* g++.old-deja/g++.mike/eh30.C, g++.old-deja/g++.mike/p4750.C,
+	g++.old-deja/g++.robertl/eb106.C, g++.old-deja/g++.robertl/eb83.C,
+	gcc.dg/20020201-1.c: Do not use { target native }.
+
+2026-01-19  Georg-Johann Lay  <avr@gjlay.de>
+
+	PR testsuite/123175
+	* gcc.dg/torture/pr123175-1.c: Use int32_t instead of int in
+	vec-type construction.
+	* gcc.dg/torture/pr123175-2.c: Same.
+
+2026-01-19  Jeff Law  <jeffrey.law@oss.qualcomm.com>
+	    Andrew Pinski  <andrew.pinski@oss.qualcomm.com>
+
+	PR target/113666
+	* gcc.target/riscv/rvv/base/pr113666.c: New test.
+
+2026-01-19  Richard Biener  <rguenther@suse.de>
+
+	PR tree-optimization/123061
+	PR tree-optimization/123636
+	* gcc.dg/torture/pr123061.c: New testcase.
+	* gcc.dg/torture/pr123636.c: Likewise.
+	* gcc.dg/tree-ssa/ssa-lim-26.c: Likewise.
+
+2026-01-19  Richard Biener  <rguenther@suse.de>
+
+	PR tree-optimization/123602
+	* g++.dg/torture/pr123603.C: New testcase.
+
+2026-01-19  Jakub Jelinek  <jakub@redhat.com>
+
+	PR tree-optimization/123656
+	* gcc.dg/pr123656.c: New test.
+
+2026-01-19  Richard Biener  <rguenther@suse.de>
+
+	PR target/123603
+	* gcc.dg/vect/costmodel/x86_64/costmodel-pr123603.c: New testcase.
+
+2026-01-19  Lulu Cheng  <chenglulu@loongson.cn>
+
+	PR target/117575
+	* g++.target/loongarch/pr117575.C: New test.
+
+2026-01-19  Steven G. Kargl  <kargl@gcc.gnu.org>
+
+	PR fortran/123375
+	* gfortran.dg/import.f90: Run code testing for a warning that
+	is now an error.
+	* gfortran.dg/pr123375.f90: New test.
+
+2026-01-18  Marek Polacek  <polacek@redhat.com>
+
+	* g++.dg/reflect/expr6.C: Adjust dg-error.
+
+2026-01-18  Simon Martin  <simon@nasilyan.com>
+
+	PR c++/122391
+	* g++.dg/parse/bitfield10.C: New test.
+
+2026-01-18  Andrew Pinski  <andrew.pinski@oss.qualcomm.com>
+
+	PR tree-optimization/123645
+	* gcc.dg/torture/pr123645-1.c: New test.
+	* gcc.dg/torture/pr123645-2.c: New test.
+
 2026-01-17  Jose E. Marchesi  <jemarch@gnu.org>
 
 	* algol68/execute/pow-real-1.a68: Adapt test to use ** rather than
