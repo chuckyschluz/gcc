@@ -4282,7 +4282,8 @@ gen_udiv_using_mul_wide (rtx op0, rtx target, rtx *result,
   if (GET_MODE_WIDER_MODE (int_mode).exists (&wider_mode)
       && can_implement_p (smul_optab, wider_mode)
       && can_implement_p (lshr_optab, wider_mode)
-      && (size + post_shift < GET_MODE_BITSIZE (wider_mode)))
+      && (size < GET_MODE_BITSIZE (wider_mode))
+      && (post_shift < GET_MODE_BITSIZE (wider_mode)))
     {
       start_sequence ();
       rtx op0_preshift
