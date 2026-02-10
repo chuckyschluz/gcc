@@ -1,6 +1,6 @@
 /* Medium-level subroutines: convert bit-field store and extract
    and shifts, multiplies and divides to rtl instructions.
-   Copyright (C) 1987-2026 Free Software Foundation, Inc.
+   Copyright (C) 1987-2025 Free Software Foundation, Inc.
 
 This file is part of GCC.
 
@@ -44,6 +44,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "langhooks.h"
 #include "tree-vector-builder.h"
 #include "recog.h"
+#include "machmode.h"
 
 struct target_expmed default_target_expmed;
 #if SWITCHABLE_TARGET
@@ -4220,225 +4221,208 @@ expand_sdiv_pow2 (scalar_int_mode mode, rtx op0, HOST_WIDE_INT d)
   return expand_shift (RSHIFT_EXPR, mode, temp, logd, NULL_RTX, 0);
 }
 
-static rtx_insn *
-gen_udiv_using_mul (rtx op0, rtx target, rtx *result, scalar_int_mode int_mode,
-		    unsigned HOST_WIDE_INT mh, unsigned HOST_WIDE_INT ml,
-		    int pre_shift, int post_shift)
-{
-  *result = NULL_RTX;
-
-  if (mh)
-    {
-      if (post_shift - 1 >= BITS_PER_WORD)
-	return NULL;
-
-      start_sequence ();
-      rtx t1 = expmed_mult_highpart (int_mode, op0, gen_int_mode (ml, int_mode),
-				     NULL_RTX, 1, MAX_COST);
-      if (t1 == NULL_RTX)
-	{
-	  end_sequence ();
-	  return NULL;
-	}
-      rtx t2 = force_operand (gen_rtx_MINUS (int_mode, op0, t1), NULL_RTX);
-      rtx t3 = expand_shift (RSHIFT_EXPR, int_mode, t2, 1, NULL_RTX, 1);
-      rtx t4 = force_operand (gen_rtx_PLUS (int_mode, t1, t3), NULL_RTX);
-      *result
-	= expand_shift (RSHIFT_EXPR, int_mode, t4, post_shift - 1, target, 1);
-      return end_sequence ();
-    }
-  else
-    {
-      if (pre_shift >= BITS_PER_WORD || post_shift >= BITS_PER_WORD)
-	return NULL;
-
-      start_sequence ();
-      rtx t1
-	= expand_shift (RSHIFT_EXPR, int_mode, op0, pre_shift, NULL_RTX, 1);
-      rtx t2 = expmed_mult_highpart (int_mode, t1, gen_int_mode (ml, int_mode),
-				     NULL_RTX, 1, MAX_COST);
-      if (t2 == NULL_RTX)
-	{
-	  end_sequence ();
-	  return NULL;
-	}
-      *result = expand_shift (RSHIFT_EXPR, int_mode, t2, post_shift, target, 1);
-      return end_sequence ();
-    }
-}
-
-static rtx_insn *
-gen_udiv_using_mul_wide (rtx op0, rtx target, rtx *result,
-			 scalar_int_mode int_mode, unsigned HOST_WIDE_INT mh,
-			 unsigned HOST_WIDE_INT ml, int pre_shift,
-			 int post_shift)
-{
-  *result = NULL_RTX;
-  if (mh && pre_shift)
-    return NULL;
-
-  int size = GET_MODE_BITSIZE (int_mode);
-  scalar_int_mode wider_mode;
-  if (GET_MODE_WIDER_MODE (int_mode).exists (&wider_mode)
-      && can_implement_p (smul_optab, wider_mode)
-      && can_implement_p (lshr_optab, wider_mode)
-      && (size < GET_MODE_BITSIZE (wider_mode))
-      && (post_shift < GET_MODE_BITSIZE (wider_mode)))
-    {
-      start_sequence ();
-      rtx op0_preshift
-	= expand_shift (RSHIFT_EXPR, int_mode, op0, pre_shift, NULL_RTX, 1);
-      rtx op0_wide = convert_modes (wider_mode, int_mode, op0_preshift, 1);
-      rtx m_rtx
-	= immed_wide_int_const (wi::uhwi (ml, GET_MODE_PRECISION (wider_mode)),
-				wider_mode);
-      rtx t1_wide = expand_binop (wider_mode, smul_optab, op0_wide, m_rtx,
-				  NULL_RTX, 1, OPTAB_DIRECT);
-      if (t1_wide == NULL_RTX)
-	{
-	  end_sequence ();
-	  return NULL;
-	}
-      rtx t2_wide
-	= expand_shift (RSHIFT_EXPR, wider_mode, t1_wide, size, NULL_RTX, 1);
-      rtx t3_wide = mh ? expand_binop (wider_mode, add_optab, op0_wide, t2_wide,
-				       NULL_RTX, 1, OPTAB_DIRECT)
-		       : t2_wide;
-      rtx t4_wide = expand_shift (RSHIFT_EXPR, wider_mode, t3_wide, post_shift,
-				  NULL_RTX, 1);
-      if (target != NULL_RTX)
-	{
-	  convert_move (target, t4_wide, 1);
-	  *result = target;
-	}
-      else
-	{
-	  *result = convert_modes (int_mode, wider_mode, t4_wide, 1);
-	}
-      return end_sequence ();
-    }
-
-  return NULL;
-}
-
-/* Expand unsigned division of OP0 by d using INT_MODE or WIDE_MODE, whichever
-is better.
-
-The standard Granlund-Montgomery unsigned multiplify-shift seqence involves
-the product of OP0 (SIZE-bits) and MH:ML (SIZE+1-bits), where MH is either 1
-or 0. For clarity, the PRE_SHIFT term is omitted without loss of generality.
-
-  QUOTIENT = (MH:ML * OP0) >> (SIZE + POST_SHIFT)
-
-After distributing the product:
-
-  QUOTIENT = ((MH * OP0) + A) >> POST_SHIFT, where
-  A = (ML * OP) >> SIZE
-
-If MH == 1, the sequence involves an intermediate sum that may overflow:
-
-  QUOTIENT = (OP0 + A) >> POST_SHIFT
-
-The overflow is handled with the following transformation:
-
-  (OP0 + A) >> 1 = A + (OP0 - A) >> 1
-
-After distributing the shift, the INT_MODE sequence is:
-
-  QUOTIENT = (A + (OP0 - A) >> 1) >> (POST_SHIFT - 1)
-
-If WIDE_MODE is available, the sum can be computed directly:
-
-  QUOTIENT = (A + OP0) >> POST_SHIFT
-
-If MH == 0, there is no intermediate sum.
-
-  QUOTIENT = A >> POST_SHIFT
-
-+-----------------+----------------------------+-----------------------------+
-| MH \ Mode       |          INT_MODE          |         WIDE_MODE           |
-+-----------------+----------------------------+-----------------------------+
-| MH = 0          | Q = A >> POST_SHIFT        | Q = A >> POST_SHIFT         |
-+-----------------+----------------------------+-----------------------------+
-| MH = 1          | B = A + (OP0 - A) >> 1     | Q = (A + OP0) >> POST_SHIFT |
-|                 | Q = B >> (POST_SHIFT - 1)  |                             |
-+-----------------+----------------------------+-----------------------------+
-
-If PRE_SHIFT > 0, which is only applicable when MH == 0, the WIDE_MODE sequence
-conveys no benefit over the INT_MODE sequence.
-
+/*
+Expand unsigned division of OP0 by D using a multiplication-shift strategy in
+INT_MODE and successively wider modes. Choose the method with the lowest
+cost.
 */
 
 static rtx
 expand_udiv_using_mult (rtx op0, rtx target, scalar_int_mode int_mode,
 			unsigned HOST_WIDE_INT d, int max_cost)
 {
-  bool speed = optimize_insn_for_speed_p ();
   int size = GET_MODE_BITSIZE (int_mode);
-  unsigned HOST_WIDE_INT mh;
-  unsigned HOST_WIDE_INT ml;
-  int post_shift;
-  int pre_shift;
 
-  /* Find a suitable multiplier and right shift count instead of directly
-   * dividing by D.  */
+  auto emit_common_seq = [&] (scalar_int_mode mode, int shift) -> rtx {
+    rtx op0_p = shift > 0 ? expand_shift (RSHIFT_EXPR, int_mode, op0, shift,
+					  NULL_RTX, 1)
+			  : op0;
+    return op0_p ? convert_modes (mode, int_mode, op0_p, 1) : NULL_RTX;
+  };
 
-  mh = choose_multiplier (d, size, size, &ml, &post_shift);
+  struct strat
+  {
+    rtx result;
+    rtx_insn *seq;
+  };
 
-  /* If the suggested multiplier is more than SIZE bits, we can do better for
-   * even divisors, using an initial right shift.  */
+  auto_vec<strat> strat_vec;
 
-  if (mh != 0 && (d & 1) == 0)
+  for (int pre_shift = 0;;)
     {
-      pre_shift = ctz_or_zero (d);
-      mh = choose_multiplier (d >> pre_shift, size, size - pre_shift, &ml,
-			      &post_shift);
-      gcc_assert (!mh);
+      unsigned HOST_WIDE_INT ml;
+      int post_shift;
+      unsigned HOST_WIDE_INT mh
+	= choose_multiplier (d, size, size - pre_shift, &ml, &post_shift);
+      gcc_assert (!(mh && pre_shift));
+      int ml_width = (ml == 0) ? 0 : (HOST_BITS_PER_WIDE_INT - clz_hwi (ml));
+      int m_width = mh ? size + 1 : ml_width;
+
+      for (opt_scalar_int_mode mode_iter = opt_scalar_int_mode (int_mode);
+	   mode_iter.exists ();
+	   mode_iter = GET_MODE_WIDER_MODE (mode_iter.require ()))
+	{
+	  scalar_int_mode compute_mode = mode_iter.require ();
+	  int prec = GET_MODE_PRECISION (compute_mode);
+	  if (prec > HOST_BITS_PER_WIDE_INT)
+	    break;
+	  /*
+	  Attempt the direct multiply-shift sequence. OP0 is SIZE - PRE_SHIFT
+	  bits and the multiplier is M_WIDTH bits. Therefore, the multiplication
+	  requires PREC >= SIZE - PRE_SHIFT + M_WIDTH.
+	  */
+	  if (prec >= (size - pre_shift + m_width)
+	      && prec > (size + post_shift))
+	    {
+	      wide_int ml_wi = wi::zext (wi::uhwi (ml, prec), size);
+	      wide_int mh_wi = wi::lshift (wi::uhwi (mh, prec), size);
+	      wide_int m_wi = wi::bit_or (mh_wi, ml_wi);
+	      rtx t1 = NULL_RTX, result = NULL_RTX;
+
+	      start_sequence ();
+	      rtx op0_c = emit_common_seq (compute_mode, pre_shift);
+	      if (op0_c)
+		t1 = expand_binop (compute_mode, smul_optab, op0_c,
+				   immed_wide_int_const (m_wi, compute_mode),
+				   NULL_RTX, 1, OPTAB_DIRECT);
+	      if (t1)
+		result = expand_shift (RSHIFT_EXPR, compute_mode, t1,
+				       size + post_shift, NULL_RTX, 1);
+	      /* QUOTIENT = (((MH << SIZE) + ML) * OP0) >> SIZE + POST_SHIFT */
+	      rtx_insn *seq = end_sequence ();
+
+	      if (result && seq)
+		strat_vec.safe_push ({result, seq});
+	    }
+
+	  if (mh)
+	    {
+	      /*
+	      Attempt the distributed multiply-shift sequence. OP0 is SIZE bits
+	      and the lower multiplier is ML_WIDTH bits. Therefore, the
+	      multiplication requires PREC >= SIZE + ML_WIDTH. The sum
+	      requires PREC > SIZE, which is satisfied by the previous
+	      requirement.
+	      */
+	      if (prec >= (size + ml_width) && prec > (size + post_shift))
+		{
+		  rtx t1 = NULL_RTX, t2 = NULL_RTX, t3 = NULL_RTX,
+		      result = NULL_RTX;
+
+		  start_sequence ();
+		  rtx op0_c = emit_common_seq (compute_mode, 0);
+		  if (op0_c)
+		    t1 = expand_binop (compute_mode, smul_optab, op0_c,
+				       gen_int_mode (ml, compute_mode),
+				       NULL_RTX, 1, OPTAB_DIRECT);
+		  if (t1)
+		    t2 = expand_shift (RSHIFT_EXPR, compute_mode, t1, size,
+				       NULL_RTX, 1);
+		  if (t2)
+		    t3 = expand_binop (compute_mode, add_optab, op0_c, t2,
+				       NULL_RTX, 1, OPTAB_DIRECT);
+		  if (t3)
+		    result = expand_shift (RSHIFT_EXPR, compute_mode, t3,
+					   post_shift, NULL_RTX, 1);
+		  /* QUOTIENT = ((OP0 + (ML * OP0) >> SIZE) >> POST_SHIFT */
+		  rtx_insn *seq = end_sequence ();
+
+		  if (result && seq)
+		    strat_vec.safe_push ({result, seq});
+		}
+	    }
+	}
+      /*
+      Fallback to the distributed multiply-highpart-shift sequence. There is no
+      explicit requirement on the precision.
+      */
+      rtx t1 = NULL_RTX, result = NULL_RTX;
+      start_sequence ();
+      rtx op0_c = emit_common_seq (int_mode, pre_shift);
+      if (op0_c)
+	t1 = expmed_mult_highpart (int_mode, op0_c, gen_int_mode (ml, int_mode),
+				   NULL_RTX, 1, MAX_COST);
+      if (mh)
+	{
+	  /*
+	  T1 + OP0 is assumed to overflow. the following identity is used:
+	  (T1 + OP0) >> 1 = T1 + ((OP0 - T1) >> 1) , where OP0 >= T1
+	  */
+	  rtx t2 = NULL_RTX, t3 = NULL_RTX, t4 = NULL_RTX;
+	  if (t1)
+	    t2 = expand_binop (int_mode, sub_optab, op0_c, t1, NULL_RTX, 1,
+			       OPTAB_DIRECT);
+	  if (t2)
+	    t3 = expand_shift (RSHIFT_EXPR, int_mode, t2, 1, NULL_RTX, 1);
+	  if (t3)
+	    t4 = expand_binop (int_mode, add_optab, t1, t3, NULL_RTX, 1,
+			       OPTAB_DIRECT);
+	  if (t4)
+	    result = expand_shift (RSHIFT_EXPR, int_mode, t4, post_shift - 1,
+				   NULL_RTX, 1);
+	  /* QUOTIENT = (T1 + ((OP0 - T1) >> 1)) >> POST_SHIFT - 1 */
+	}
+      else
+	{
+	  if (t1)
+	    result = expand_shift (RSHIFT_EXPR, int_mode, t1, post_shift,
+				   NULL_RTX, 1);
+	  /* QUOTIENT = ((ML * OP0) >> SIZE) >> POST_SHIFT */
+	}
+
+      rtx_insn *seq = end_sequence ();
+
+      if (result && seq)
+	strat_vec.safe_push ({result, seq});
+
+      /* We can do better for even divisors using an initial right shift. Set
+       * PRE_SHIFT to CTZ(D) and run through the loop again. */
+      if ((d & 1) == 0)
+	{
+	  pre_shift = ctz_or_zero (d);
+	  d = d >> pre_shift;
+	  gcc_assert (d & 1);
+	}
+      else
+	break;
     }
-  else
-    pre_shift = 0;
-
-  /* Expand the quotient using INT_MODE and WIDE_MODE and choose the sequence
-   * with the lowest cost. */
-
-  rtx int_mode_result = NULL_RTX;
-  rtx_insn *int_mode_seq
-    = gen_udiv_using_mul (op0, target, &int_mode_result, int_mode, mh, ml,
-			  pre_shift, post_shift);
-
-  rtx wide_mode_result = NULL_RTX;
-  rtx_insn *wide_mode_seq
-    = gen_udiv_using_mul_wide (op0, target, &wide_mode_result, int_mode, mh, ml,
-			       pre_shift, post_shift);
 
   rtx result = NULL_RTX;
   rtx_insn *seq = NULL;
-  int cost = max_cost;
 
-  if (int_mode_seq != NULL)
+  unsigned cost = max_cost;
+  bool speed = optimize_insn_for_speed_p ();
+
+  for (unsigned i = 0; i < strat_vec.length (); i++)
     {
-      int int_mode_cost = seq_cost (int_mode_seq, speed);
-      if (int_mode_cost <= cost)
+      rtx this_result = strat_vec[i].result;
+      rtx_insn *this_seq = strat_vec[i].seq;
+      unsigned this_cost = seq_cost (this_seq, speed);
+
+      /* Estimate the final move cost without modifying the real target */
+      start_sequence ();
+      rtx fake_reg = gen_raw_REG (int_mode, LAST_VIRTUAL_REGISTER + 1);
+      convert_move (fake_reg, this_result, 1);
+      rtx_insn *move_insn = end_sequence ();
+
+      this_cost += seq_cost (move_insn, speed);
+
+      if (this_cost < cost)
 	{
-	  result = int_mode_result;
-	  seq = int_mode_seq;
-	  cost = int_mode_cost;
+	  result = this_result;
+	  seq = this_seq;
+	  cost = this_cost;
 	}
     }
-  if (wide_mode_seq != NULL)
+
+  if (result && seq && target)
     {
-      int wide_mode_cost = seq_cost (wide_mode_seq, speed);
-      if (wide_mode_cost <= cost)
-	{
-	  result = wide_mode_result;
-	  seq = wide_mode_seq;
-	}
+      emit_insn (seq);
+      convert_move (target, result, 1);
+      return target;
     }
 
-  if (seq != NULL)
-    emit_insn (seq);
-
-  return result;
+  return NULL_RTX;
 }
 
 /* Emit the code to divide OP0 by OP1, putting the result in TARGET
