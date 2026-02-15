@@ -9258,10 +9258,19 @@ vect_slp_analyze_operations (vec_info *vinfo)
 	    dump_printf_loc (MSG_NOTE, vect_location,
 			     "removing SLP instance operations starting from: %G",
 			     stmt_info->stmt);
+	  while (!visited_vec.is_empty ())
+	    {
+	      slp_tree node = visited_vec.pop ();
+	      SLP_TREE_TYPE (node) = undef_vec_info_type;
+	      if (node->data)
+		{
+		  delete node->data;
+		  node->data = nullptr;
+		}
+	      visited.remove (node);
+	    }
 	  vect_free_slp_instance (instance);
           vinfo->slp_instances.ordered_remove (i);
-	  while (!visited_vec.is_empty ())
-	    visited.remove (visited_vec.pop ());
 	}
       else
 	{
@@ -12135,10 +12144,8 @@ vect_remove_slp_scalar_calls (vec_info *vinfo,
       if (lhs)
 	new_stmt = gimple_build_assign (lhs, build_zero_cst (TREE_TYPE (lhs)));
       else
-	{
-	  new_stmt = gimple_build_nop ();
-	  unlink_stmt_vdef (stmt_info->stmt);
-	}
+	new_stmt = gimple_build_nop ();
+      unlink_stmt_vdef (stmt_info->stmt);
       gsi = gsi_for_stmt (stmt);
       vinfo->replace_stmt (&gsi, stmt_info, new_stmt);
       if (lhs)

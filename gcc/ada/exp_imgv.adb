@@ -29,6 +29,7 @@ with Checks;         use Checks;
 with Einfo.Entities; use Einfo.Entities;
 with Einfo.Utils;    use Einfo.Utils;
 with Debug;          use Debug;
+with Exp_Ch7;        use Exp_Ch7;
 with Exp_Put_Image;
 with Exp_Util;       use Exp_Util;
 with Lib;            use Lib;
@@ -1041,7 +1042,7 @@ package body Exp_Imgv is
    --  Start of processing for Expand_Image_Attribute
 
    begin
-      if Is_Object_Image (Pref) then
+      if Is_Object_Prefix (Pref) then
          Rewrite_Object_Image (N, Pref, Name_Image, Standard_String);
          return;
       end if;
@@ -1050,6 +1051,7 @@ package body Exp_Imgv is
       --  Exp_Put_Image for details.
 
       if Exp_Put_Image.Image_Should_Call_Put_Image (N) then
+         Establish_Transient_Scope (N, Manage_Sec_Stack => True);
          Rewrite (N, Exp_Put_Image.Build_Image_Call (N));
          Analyze_And_Resolve (N, Standard_String, Suppress => All_Checks);
          return;
@@ -1854,7 +1856,7 @@ package body Exp_Imgv is
       Rtyp : Entity_Id;
 
    begin
-      if Is_Object_Image (Pref) then
+      if Is_Object_Prefix (Pref) then
          Rewrite_Object_Image (N, Pref, Name_Wide_Image, Standard_Wide_String);
          return;
       end if;
@@ -1863,6 +1865,7 @@ package body Exp_Imgv is
       --  Exp_Put_Image for details.
 
       if Exp_Put_Image.Image_Should_Call_Put_Image (N) then
+         Establish_Transient_Scope (N, Manage_Sec_Stack => True);
          Rewrite (N, Exp_Put_Image.Build_Image_Call (N));
          Analyze_And_Resolve (N, Standard_Wide_String, Suppress => All_Checks);
          return;
@@ -1962,7 +1965,7 @@ package body Exp_Imgv is
       Rtyp : Entity_Id;
 
    begin
-      if Is_Object_Image (Pref) then
+      if Is_Object_Prefix (Pref) then
          Rewrite_Object_Image
            (N, Pref, Name_Wide_Wide_Image, Standard_Wide_Wide_String);
          return;
@@ -1972,6 +1975,7 @@ package body Exp_Imgv is
       --  Exp_Put_Image for details.
 
       if Exp_Put_Image.Image_Should_Call_Put_Image (N) then
+         Establish_Transient_Scope (N, Manage_Sec_Stack => True);
          Rewrite (N, Exp_Put_Image.Build_Image_Call (N));
          Analyze_And_Resolve
            (N, Standard_Wide_Wide_String, Suppress => All_Checks);

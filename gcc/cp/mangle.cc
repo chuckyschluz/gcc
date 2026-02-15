@@ -833,13 +833,6 @@ write_mangled_name (const tree decl, bool top_level)
       write_encoding (decl);
     }
 
-  /* If this is the pre/post function for a guarded function, append
-     .pre/post, like something from create_virtual_clone.  */
-  if (DECL_IS_PRE_FN_P (decl))
-    write_string (".pre");
-  else if (DECL_IS_POST_FN_P (decl))
-    write_string (".post");
-
   /* If this is a coroutine helper, then append an appropriate string to
      identify which.  */
   if (tree ramp = DECL_RAMP_FN (decl))
@@ -1928,8 +1921,10 @@ write_template_param_decl (tree parm)
 	write_string ("Tn");
 
 	tree type = TREE_TYPE (decl);
+	/* TODO: We need to also mangle constrained auto*, auto&, etc, but
+	   it's not clear how.  See finish_constrained_parameter.  */
 	if (tree c = (is_auto (type)
-		      ? PLACEHOLDER_TYPE_CONSTRAINTS (type)
+		      ? TEMPLATE_PARM_CONSTRAINTS (parm)
 		      : NULL_TREE))
 	  {
 	    if (AUTO_IS_DECLTYPE (type))

@@ -1556,7 +1556,8 @@ vect_analyze_loop_form (class loop *loop, gimple *loop_vectorized_call,
 	return opt_result::failure_at (vect_location,
 				       "not vectorized: Bad inner loop.\n");
 
-      if (!expr_invariant_in_loop_p (loop, inner.number_of_iterations))
+      if (inner.number_of_iterations ==  chrec_dont_know
+	  || !expr_invariant_in_loop_p (loop, inner.number_of_iterations))
 	return opt_result::failure_at (vect_location,
 				       "not vectorized: inner-loop count not"
 				       " invariant.\n");
@@ -1955,6 +1956,22 @@ vect_analyze_loop_costing (loop_vec_info loop_vinfo,
       return -1;
     }
 
+  /* As we cannot use a runtime check to gate profitability for uncounted
+     loops require either an estimate or if none, at least a profitable
+     vectorization within the first vector iteration (that condition
+     will practically never be true due to the required epilog and
+     likely alignment prologue).   */
+  if (LOOP_VINFO_NITERS_UNCOUNTED_P (loop_vinfo)
+      && estimated_niter == -1
+      && min_profitable_estimate > (int) vect_vf_for_cost (loop_vinfo))
+    {
+      if (dump_enabled_p ())
+	dump_printf_loc (MSG_NOTE, vect_location,
+			 "not vectorized: no loop iteration estimate on the "
+			 "uncounted loop and not trivially profitable.\n");
+      return -1;
+    }
+
   return 1;
 }
 
@@ -2311,17 +2328,8 @@ start_over:
 
   loop_vinfo->vector_costs = init_cost (loop_vinfo, false);
 
-  /* Analyze the alignment of the data-refs in the loop.
-     Fail if a data reference is found that cannot be vectorized.  */
-
-  ok = vect_analyze_data_refs_alignment (loop_vinfo);
-  if (!ok)
-    {
-      if (dump_enabled_p ())
-	dump_printf_loc (MSG_MISSED_OPTIMIZATION, vect_location,
-			 "bad data alignment.\n");
-      return ok;
-    }
+  /* Analyze the alignment of the data-refs in the loop.  */
+  vect_analyze_data_refs_alignment (loop_vinfo);
 
   /* Prune the list of ddrs to be tested at run-time by versioning for alias.
      It is important to call pruning after vect_analyze_data_ref_accesses,
@@ -4962,7 +4970,16 @@ get_initial_defs_for_reduction (loop_vec_info loop_vinfo,
   if (neutral_op
       && !useless_type_conversion_p (vector_elt_type,
 				     TREE_TYPE (neutral_op)))
-    neutral_op = gimple_convert (&ctor_seq, vector_elt_type, neutral_op);
+    {
+      if (VECTOR_BOOLEAN_TYPE_P (vector_type))
+	neutral_op = gimple_build (&ctor_seq, COND_EXPR,
+				   vector_elt_type,
+				   neutral_op,
+				   build_all_ones_cst (vector_elt_type),
+				   build_zero_cst (vector_elt_type));
+      else
+	neutral_op = gimple_convert (&ctor_seq, vector_elt_type, neutral_op);
+    }
   for (j = 0; j < nunits * number_of_vectors; ++j)
     {
       tree op;
@@ -5154,9 +5171,7 @@ vect_find_reusable_accumulator (loop_vec_info loop_vinfo,
 	 initialize the accumulator with a neutral value instead.  */
       if (!operand_equal_p (initial_value, main_adjustment))
 	return false;
-      code_helper code = VECT_REDUC_INFO_CODE (reduc_info);
-      initial_values[0] = neutral_op_for_reduction (TREE_TYPE (initial_value),
-						    code, initial_value);
+      initial_values[0] = VECT_REDUC_INFO_NEUTRAL_OP (reduc_info);
     }
   VECT_REDUC_INFO_EPILOGUE_ADJUSTMENT (reduc_info) = main_adjustment;
   VECT_REDUC_INFO_INITIAL_VALUES (reduc_info).truncate (0);
@@ -6520,7 +6535,7 @@ vectorize_fold_left_reduction (loop_vec_info loop_vinfo,
       if (LOOP_VINFO_FULLY_WITH_LENGTH_P (loop_vinfo))
 	{
 	  len = vect_get_loop_len (loop_vinfo, gsi, lens, vec_num, vectype_in,
-				   i, 1);
+				   i, 1, false);
 	  signed char biasval = LOOP_VINFO_PARTIAL_LOAD_STORE_BIAS (loop_vinfo);
 	  bias = build_int_cst (intQI_type_node, biasval);
 	  if (!is_cond_op)
@@ -7607,8 +7622,10 @@ vectorizable_reduction (loop_vec_info loop_vinfo,
   tree initial_value = NULL_TREE;
   if (reduc_chain)
     initial_value = vect_phi_initial_value (reduc_def_phi);
-  neutral_op = neutral_op_for_reduction (TREE_TYPE (vectype_out),
+  neutral_op = neutral_op_for_reduction (TREE_TYPE
+					   (gimple_phi_result (reduc_def_phi)),
 					 orig_code, initial_value);
+  VECT_REDUC_INFO_NEUTRAL_OP (reduc_info) = neutral_op;
 
   if (double_reduc && reduction_type == FOLD_LEFT_REDUCTION)
     {
@@ -7648,15 +7665,19 @@ vectorizable_reduction (loop_vec_info loop_vinfo,
   /* For double reductions, and for SLP reductions with a neutral value,
      we construct a variable-length initial vector by loading a vector
      full of the neutral value and then shift-and-inserting the start
-     values into the low-numbered elements.  */
+     values into the low-numbered elements.  This is however not needed
+     when neutral and initial value are equal or we can handle the
+     initial value via adjustment in the epilogue.  */
   if ((double_reduc || neutral_op)
       && !nunits_out.is_constant ()
-      && (SLP_TREE_LANES (slp_node) != 1 && !reduc_chain)
-      && (!neutral_op
-	  || !operand_equal_p (neutral_op,
-			       vect_phi_initial_value (reduc_def_phi)))
+      && reduction_type != INTEGER_INDUC_COND_REDUCTION
+      && !((SLP_TREE_LANES (slp_node) == 1 || reduc_chain)
+	   && neutral_op
+	   && (!double_reduc
+	       || operand_equal_p (neutral_op,
+				   vect_phi_initial_value (reduc_def_phi))))
       && !direct_internal_fn_supported_p (IFN_VEC_SHL_INSERT,
-					  vectype_out, OPTIMIZE_FOR_SPEED))
+					  vectype_out, OPTIMIZE_FOR_BOTH))
     {
       if (dump_enabled_p ())
 	dump_printf_loc (MSG_MISSED_OPTIMIZATION, vect_location,
@@ -8327,7 +8348,6 @@ vect_transform_cycle_phi (loop_vec_info loop_vinfo,
 					       vectype_out);
 
   /* Get the loop-entry arguments.  */
-  tree vec_initial_def = NULL_TREE;
   auto_vec<tree> vec_initial_defs;
   vec_initial_defs.reserve (vec_num);
   /* Optimize: if initial_def is for REDUC_MAX smaller than the base
@@ -8376,40 +8396,29 @@ vect_transform_cycle_phi (loop_vec_info loop_vinfo,
 	  gphi *this_phi = as_a<gphi *> (stmts[i]->stmt);
 	  initial_values.quick_push (vect_phi_initial_value (this_phi));
 	}
-      if (vec_num == 1)
-	vect_find_reusable_accumulator (loop_vinfo, reduc_info, vectype_out);
-      if (!initial_values.is_empty ())
+      tree neutral_op = VECT_REDUC_INFO_NEUTRAL_OP (reduc_info);
+      if (vec_num == 1
+	  && vect_find_reusable_accumulator (loop_vinfo,
+					     reduc_info, vectype_out))
+	;
+      /* Try to simplify the vector initialization by applying an
+	 adjustment after the reduction has been performed.  This
+	 can also break a critical path but on the other hand
+	 requires to keep the initial value live across the loop.  */
+      else if (neutral_op
+	       && initial_values.length () == 1
+	       && STMT_VINFO_DEF_TYPE (stmt_info) == vect_reduction_def
+	       && !operand_equal_p (neutral_op, initial_values[0]))
 	{
-	  tree initial_value
-	    = (num_phis == 1 ? initial_values[0] : NULL_TREE);
-	  code_helper code = VECT_REDUC_INFO_CODE (reduc_info);
-	  tree neutral_op
-	    = neutral_op_for_reduction (TREE_TYPE (vectype_out),
-					code, initial_value);
-	  /* Try to simplify the vector initialization by applying an
-	     adjustment after the reduction has been performed.  This
-	     can also break a critical path but on the other hand
-	     requires to keep the initial value live across the loop.  */
-	  if (neutral_op
-	      && initial_values.length () == 1
-	      && !VECT_REDUC_INFO_REUSED_ACCUMULATOR (reduc_info)
-	      && STMT_VINFO_DEF_TYPE (stmt_info) == vect_reduction_def
-	      && !operand_equal_p (neutral_op, initial_values[0]))
-	    {
-	      VECT_REDUC_INFO_EPILOGUE_ADJUSTMENT (reduc_info)
-		= initial_values[0];
-	      initial_values[0] = neutral_op;
-	    }
-	  get_initial_defs_for_reduction (loop_vinfo, reduc_info, vectype_out,
-					  &vec_initial_defs, vec_num,
-					  stmts.length (), neutral_op);
+	  VECT_REDUC_INFO_EPILOGUE_ADJUSTMENT (reduc_info)
+	    = initial_values[0];
+	  initial_values[0] = neutral_op;
 	}
-    }
-
-  if (vec_initial_def)
-    {
-      vec_initial_defs.create (1);
-      vec_initial_defs.quick_push (vec_initial_def);
+      if (!VECT_REDUC_INFO_REUSED_ACCUMULATOR (reduc_info)
+	  || loop_vinfo->main_loop_edge)
+	get_initial_defs_for_reduction (loop_vinfo, reduc_info, vectype_out,
+					&vec_initial_defs, vec_num,
+					stmts.length (), neutral_op);
     }
 
   if (reduc_info)
@@ -9831,14 +9840,15 @@ vectorizable_induction (loop_vec_info loop_vinfo,
 	}
       else
 	{
+	  tree step = gimple_convert (&init_stmts, stept, steps[0]);
 	  if (init_node)
 	    ;
-	  else if (INTEGRAL_TYPE_P (TREE_TYPE (steps[0])))
+	  else if (INTEGRAL_TYPE_P (stept))
 	    {
 	      new_name = gimple_convert (&init_stmts, stept, inits[0]);
 	      /* Build the initial value directly as a VEC_SERIES_EXPR.  */
 	      vec_init = gimple_build (&init_stmts, VEC_SERIES_EXPR,
-				       step_vectype, new_name, steps[0]);
+				       step_vectype, new_name, step);
 	      if (!useless_type_conversion_p (vectype, step_vectype))
 		vec_init = gimple_build (&init_stmts, VIEW_CONVERT_EXPR,
 					 vectype, vec_init);
@@ -9848,19 +9858,18 @@ vectorizable_induction (loop_vec_info loop_vinfo,
 	      /* Build:
 		 [base, base, base, ...]
 		 + (vectype) [0, 1, 2, ...] * [step, step, step, ...].  */
-	      gcc_assert (SCALAR_FLOAT_TYPE_P (TREE_TYPE (steps[0])));
+	      gcc_assert (SCALAR_FLOAT_TYPE_P (stept));
 	      gcc_assert (flag_associative_math);
 	      gcc_assert (index_vectype != NULL_TREE);
 
 	      tree index = build_index_vector (index_vectype, 0, 1);
-	      new_name = gimple_convert (&init_stmts, TREE_TYPE (steps[0]),
-					 inits[0]);
+	      new_name = gimple_convert (&init_stmts, stept, inits[0]);
 	      tree base_vec = gimple_build_vector_from_val (&init_stmts,
 							    step_vectype,
 							    new_name);
 	      tree step_vec = gimple_build_vector_from_val (&init_stmts,
 							    step_vectype,
-							    steps[0]);
+							    step);
 	      vec_init = gimple_build (&init_stmts, FLOAT_EXPR,
 				       step_vectype, index);
 	      vec_init = gimple_build (&init_stmts, MULT_EXPR,
@@ -9873,7 +9882,7 @@ vectorizable_induction (loop_vec_info loop_vinfo,
 	    }
 	  /* iv_loop is nested in the loop to be vectorized. Generate:
 	     vec_step = [S, S, S, S]  */
-	  t = unshare_expr (steps[0]);
+	  t = unshare_expr (step);
 	  gcc_assert (CONSTANT_CLASS_P (t)
 		      || TREE_CODE (t) == SSA_NAME);
 	  vec_step = gimple_build_vector_from_val (&init_stmts,
@@ -9920,7 +9929,7 @@ vectorizable_induction (loop_vec_info loop_vinfo,
 		   _21 = vect_vec_iv_.6_22 + vect_cst__22;  */
 	      vec_loop_lens *lens = &LOOP_VINFO_LENS (loop_vinfo);
 	      tree len = vect_get_loop_len (loop_vinfo, NULL, lens, 1,
-					    vectype, 0, 0);
+					    vectype, 0, 0, false);
 	      if (SCALAR_FLOAT_TYPE_P (stept))
 		expr = gimple_build (&stmts, FLOAT_EXPR, stept, len);
 	      else
@@ -10067,7 +10076,7 @@ vectorizable_live_operation_1 (loop_vec_info loop_vinfo, basic_block exit_bb,
     {
       /* Emit:
 
-	 SCALAR_RES = VEC_EXTRACT <VEC_LHS, LEN - (BIAS + 1)>
+	 SCALAR_RES = VEC_EXTRACT <VEC_LHS, LEN - 1>
 
 	 where VEC_LHS is the vectorized live-out result, LEN is the length of
 	 the vector, BIAS is the load-store bias.  The bias should not be used
@@ -10078,21 +10087,14 @@ vectorizable_live_operation_1 (loop_vec_info loop_vinfo, basic_block exit_bb,
       gimple_stmt_iterator gsi = gsi_last (tem);
       tree len = vect_get_loop_len (loop_vinfo, &gsi,
 				    &LOOP_VINFO_LENS (loop_vinfo),
-				    1, vectype, 0, 1);
+				    1, vectype, 0, 1, false);
       gimple_seq_add_seq (&stmts, tem);
 
-      /* BIAS + 1.  */
-      signed char biasval = LOOP_VINFO_PARTIAL_LOAD_STORE_BIAS (loop_vinfo);
-      tree bias_plus_one
-	= int_const_binop (PLUS_EXPR,
-			   build_int_cst (TREE_TYPE (len), biasval),
-			   build_one_cst (TREE_TYPE (len)));
-
-      /* LAST_INDEX = LEN - (BIAS + 1).  */
+      /* LAST_INDEX = LEN - 1.  */
       tree last_index = gimple_build (&stmts, MINUS_EXPR, TREE_TYPE (len),
-				     len, bias_plus_one);
+				     len, build_one_cst (TREE_TYPE (len)));
 
-      /* SCALAR_RES = VEC_EXTRACT <VEC_LHS, LEN - (BIAS + 1)>.  */
+      /* SCALAR_RES = VEC_EXTRACT <VEC_LHS, LEN - 1>.  */
       tree scalar_res
 	= gimple_build (&stmts, CFN_VEC_EXTRACT, TREE_TYPE (vectype),
 			vec_lhs_phi, last_index);
@@ -10713,7 +10715,7 @@ vect_record_loop_len (loop_vec_info loop_vinfo, vec_loop_lens *lens,
 tree
 vect_get_loop_len (loop_vec_info loop_vinfo, gimple_stmt_iterator *gsi,
 		   vec_loop_lens *lens, unsigned int nvectors, tree vectype,
-		   unsigned int index, unsigned int factor)
+		   unsigned int index, unsigned int factor, bool adjusted)
 {
   rgroup_controls *rgl = &(*lens)[nvectors - 1];
   bool use_bias_adjusted_len =
@@ -10746,7 +10748,7 @@ vect_get_loop_len (loop_vec_info loop_vinfo, gimple_stmt_iterator *gsi,
 	}
     }
 
-  if (use_bias_adjusted_len)
+  if (use_bias_adjusted_len && adjusted)
     return rgl->bias_adjusted_ctrl;
 
   tree loop_len = rgl->controls[index];
@@ -10769,6 +10771,36 @@ vect_get_loop_len (loop_vec_info loop_vinfo, gimple_stmt_iterator *gsi,
 	    gsi_insert_seq_before (gsi, seq, GSI_SAME_STMT);
 	}
     }
+  else if (factor && rgl->factor != factor)
+    {
+      /* The number of scalars per iteration, scalar occupied bytes and
+	 the number of vectors are both compile-time constants.  */
+      unsigned int nscalars_per_iter
+	= exact_div (nvectors * TYPE_VECTOR_SUBPARTS (vectype),
+		     LOOP_VINFO_VECT_FACTOR (loop_vinfo)).to_constant ();
+      unsigned int rglvecsize = rgl->factor * rgl->max_nscalars_per_iter;
+      unsigned int vecsize = nscalars_per_iter * factor;
+      if (rglvecsize > vecsize)
+	{
+	  unsigned int fac = rglvecsize / vecsize;
+	  tree iv_type = LOOP_VINFO_RGROUP_IV_TYPE (loop_vinfo);
+	  gimple_seq seq = NULL;
+	  loop_len = gimple_build (&seq, EXACT_DIV_EXPR, iv_type, loop_len,
+				   build_int_cst (iv_type, fac));
+	  if (seq)
+	    gsi_insert_seq_before (gsi, seq, GSI_SAME_STMT);
+	}
+      else if (rglvecsize < vecsize)
+	{
+	  unsigned int fac = vecsize / rglvecsize;
+	  tree iv_type = LOOP_VINFO_RGROUP_IV_TYPE (loop_vinfo);
+	  gimple_seq seq = NULL;
+	  loop_len = gimple_build (&seq, MULT_EXPR, iv_type, loop_len,
+				   build_int_cst (iv_type, fac));
+	  if (seq)
+	    gsi_insert_seq_before (gsi, seq, GSI_SAME_STMT);
+	}
+    }
   return loop_len;
 }
 
@@ -10786,7 +10818,7 @@ vect_gen_loop_len_mask (loop_vec_info loop_vinfo, gimple_stmt_iterator *gsi,
   tree all_one_mask = build_all_ones_cst (vectype);
   tree all_zero_mask = build_zero_cst (vectype);
   tree len = vect_get_loop_len (loop_vinfo, gsi, lens, nvectors, vectype, index,
-				factor);
+				factor, true);
   tree bias = build_int_cst (intQI_type_node,
 			     LOOP_VINFO_PARTIAL_LOAD_STORE_BIAS (loop_vinfo));
   tree len_mask = make_temp_ssa_name (TREE_TYPE (stmt), NULL, "vec_len_mask");
@@ -11057,7 +11089,7 @@ vect_update_ivs_after_vectorizer_for_early_breaks (loop_vec_info loop_vinfo)
     {
       vec_loop_lens *lens = &LOOP_VINFO_LENS (loop_vinfo);
       tree_vf = vect_get_loop_len (loop_vinfo, NULL, lens, 1,
-				   NULL_TREE, 0, 0);
+				   NULL_TREE, 0, 0, true);
     }
 
   tree iter_var;

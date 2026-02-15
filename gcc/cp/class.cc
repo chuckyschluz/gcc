@@ -37,6 +37,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "gimplify.h"
 #include "intl.h"
 #include "asan.h"
+#include "contracts.h"
 
 /* Id for dumping the class hierarchy.  */
 int class_dump_id;
@@ -1222,9 +1223,10 @@ object_parms_correspond (tree fn, tree method, tree context)
       && DECL_IOBJ_MEMBER_FUNCTION_P (method))
     {
       /* Either both or neither need to be ref-qualified for
-	 differing quals to allow overloading.  */
-      if ((FUNCTION_REF_QUALIFIED (fn_type)
-	   == FUNCTION_REF_QUALIFIED (method_type))
+	 differing quals to allow overloading before C++20 (P1787R6).  */
+      if ((cxx_dialect >= cxx20
+	   || (FUNCTION_REF_QUALIFIED (fn_type)
+	       == FUNCTION_REF_QUALIFIED (method_type)))
 	  && (type_memfn_quals (fn_type) != type_memfn_quals (method_type)
 	      || type_memfn_rqual (fn_type) != type_memfn_rqual (method_type)))
 	return false;
@@ -3254,6 +3256,10 @@ check_for_override (tree decl, tree ctype)
 
       if (DECL_DESTRUCTOR_P (decl))
 	TYPE_HAS_NONTRIVIAL_DESTRUCTOR (ctype) = true;
+
+      if (DECL_HAS_CONTRACTS_P (decl))
+	error_at (DECL_SOURCE_LOCATION (decl),
+		  "contracts cannot be added to virtual functions");
     }
   else if (DECL_FINAL_P (decl))
     error ("%q+#D marked %<final%>, but is not virtual", decl);

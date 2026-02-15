@@ -46,6 +46,8 @@ along with GCC; see the file COPYING3.  If not see
 #include "selftest-tree.h"
 #include "context.h"
 #include "channels.h"
+#include "value-relation.h"
+#include "range-op.h"
 
 #include "text-art/tree-widget.h"
 
@@ -2196,6 +2198,13 @@ static bool
 can_throw_p (const gcall &call, tree fndecl)
 {
   if (!flag_exceptions)
+    return false;
+
+  /* Compatibility flag to allow the user to assume external functions
+     never throw exceptions.  This may be useful when using the analyzer
+     on C code that is compiled with -fexceptions, but for which the headers
+     haven't yet had "nothrow" attributes systematically added.  */
+  if (flag_analyzer_assume_nothrow)
     return false;
 
   if (gimple_call_nothrow_p (&call))
@@ -4509,21 +4518,17 @@ public:
   {
     if (!cluster)
       return;
-    for (auto iter : *cluster)
+    for (auto iter : cluster->get_map ().get_concrete_bindings ())
       {
-	const binding_key *key = iter.m_key;
-	const svalue *sval = iter.m_sval;
+	const bit_range &bits = iter.first;
+	const svalue *sval = iter.second;
 
-	if (const concrete_binding *concrete_key
-	    = key->dyn_cast_concrete_binding ())
-	  {
-	    byte_range fragment_bytes (0, 0);
-	    if (concrete_key->get_byte_range (&fragment_bytes))
-	      m_fragments.safe_push (fragment (fragment_bytes, sval));
-	  }
-	else
-	  m_symbolic_bindings.safe_push (key);
+	byte_range fragment_bytes (0, 0);
+	if (bits.as_byte_range (&fragment_bytes))
+	  m_fragments.safe_push (fragment (fragment_bytes, sval));
       }
+    for (auto iter : cluster->get_map ().get_symbolic_bindings ())
+      m_symbolic_bindings.safe_push (iter);
     m_fragments.qsort (fragment::cmp_ptrs);
   }
 
@@ -4562,14 +4567,14 @@ public:
       {
 	if (&iter != m_symbolic_bindings.begin ())
 	  pp_string (pp, ", ");
-	(*iter).dump_to_pp (pp, true);
+	iter.m_region->dump_to_pp (pp, true);
       }
     pp_string (pp, "])");
   }
 
 private:
   auto_vec<fragment> m_fragments;
-  auto_vec<const binding_key *> m_symbolic_bindings;
+  auto_vec<binding_map::symbolic_binding> m_symbolic_bindings;
 };
 
 /* Simulate reading the bytes at BYTES from BASE_REG.
@@ -4839,7 +4844,11 @@ region_model::scan_for_null_terminator (const region *reg,
       reg->dump_to_pp (pp, true);
       logger->end_log_line ();
     }
+  if (out_sval)
+    *out_sval = nullptr;
   const svalue *sval = scan_for_null_terminator_1 (reg, expr, out_sval, ctxt);
+  if (sval && out_sval)
+    gcc_assert (*out_sval);
   if (logger)
     {
       pretty_printer *pp = logger->get_printer ();
@@ -5023,6 +5032,8 @@ region_model::check_for_null_terminated_string_arg (const call_details &cd,
 				  out_sval,
 				  &my_ctxt))
     {
+      if (out_sval)
+	gcc_assert (*out_sval);
       if (include_terminator)
 	return num_bytes_read_sval;
       else
@@ -5343,6 +5354,30 @@ region_model::eval_condition (const svalue *lhs,
 	  }
 	  break;
 	}
+    }
+
+  /* Try range_op, but avoid cases where we have been sloppy about types.  */
+  if (lhs->get_type ()
+      && rhs->get_type ()
+      && range_compatible_p (lhs->get_type (), rhs->get_type ()))
+    {
+      value_range lhs_vr, rhs_vr;
+      if (lhs->maybe_get_value_range (lhs_vr))
+	if (rhs->maybe_get_value_range (rhs_vr))
+	  {
+	    range_op_handler handler (op);
+	    if (handler)
+	      {
+		int_range_max out;
+		if (handler.fold_range (out, boolean_type_node, lhs_vr, rhs_vr))
+		  {
+		    if (out.zero_p ())
+		      return tristate::TS_FALSE;
+		    if (out.nonzero_p ())
+		      return tristate::TS_TRUE;
+		  }
+	      }
+	  }
     }
 
   /* Attempt to unwrap cast if there is one, and the types match.  */
@@ -6336,13 +6371,14 @@ region_model::push_frame (const function &fun,
 
 	    /* Get region for default val of DECL_RESULT within the
 	       callee.  */
-	    tree result_default_ssa = get_ssa_default_def (fun, result);
-	    gcc_assert (result_default_ssa);
-	    const region *callee_result_reg
-	      = get_lvalue (result_default_ssa, ctxt);
+	    if (tree result_default_ssa = get_ssa_default_def (fun, result))
+	      {
+		const region *callee_result_reg
+		  = get_lvalue (result_default_ssa, ctxt);
 
-	    /* Set the callee's reference to refer to the caller's lhs.  */
-	    set_value (callee_result_reg, ref_sval, ctxt);
+		/* Set the callee's reference to refer to the caller's lhs.  */
+		set_value (callee_result_reg, ref_sval, ctxt);
+	      }
 	  }
     }
   else
@@ -7122,18 +7158,15 @@ private:
 	    = as_a <const compound_svalue *> (m_copied_sval);
 	  bit_size_t result = 0;
 	  /* Find keys for uninit svals.  */
-	  for (auto iter : *compound_sval)
+	  for (auto iter : compound_sval->get_map ().get_concrete_bindings ())
 	    {
-	      const svalue *sval = iter.m_sval;
+	      const svalue *sval = iter.second;
 	      if (const poisoned_svalue *psval
 		  = sval->dyn_cast_poisoned_svalue ())
 		if (psval->get_poison_kind () == poison_kind::uninit)
 		  {
-		    const binding_key *key = iter.m_key;
-		    const concrete_binding *ckey
-		      = key->dyn_cast_concrete_binding ();
-		    gcc_assert (ckey);
-		    result += ckey->get_size_in_bits ();
+		    const bit_range &bits = iter.first;
+		    result += bits.m_size_in_bits;
 		  }
 	    }
 	  return result;
@@ -7173,23 +7206,15 @@ private:
 	= m_copied_sval->dyn_cast_compound_svalue ())
       {
 	/* Find keys for uninit svals.  */
-	auto_vec<const concrete_binding *> uninit_keys;
-	for (auto iter : *compound_sval)
+	auto_vec<bit_range> uninit_bit_ranges;
+	for (auto iter : compound_sval->get_map ().get_concrete_bindings ())
 	  {
-	    const svalue *sval = iter.m_sval;
+	    const svalue *sval = iter.second;
 	    if (const poisoned_svalue *psval
 		= sval->dyn_cast_poisoned_svalue ())
 	      if (psval->get_poison_kind () == poison_kind::uninit)
-		{
-		  const binding_key *key = iter.m_key;
-		  const concrete_binding *ckey
-		    = key->dyn_cast_concrete_binding ();
-		  gcc_assert (ckey);
-		  uninit_keys.safe_push (ckey);
-		}
+		uninit_bit_ranges.safe_push (iter.first);
 	  }
-	/* Complain about them in sorted order.  */
-	uninit_keys.qsort (concrete_binding::cmp_ptr_ptr);
 
 	std::unique_ptr<record_layout> layout;
 
@@ -7203,11 +7228,11 @@ private:
 	  }
 
 	unsigned i;
-	const concrete_binding *ckey;
-	FOR_EACH_VEC_ELT (uninit_keys, i, ckey)
+	bit_range *bits;
+	FOR_EACH_VEC_ELT (uninit_bit_ranges, i, bits)
 	  {
-	    bit_offset_t start_bit = ckey->get_start_bit_offset ();
-	    bit_offset_t next_bit = ckey->get_next_bit_offset ();
+	    bit_offset_t start_bit = bits->get_start_bit_offset ();
+	    bit_offset_t next_bit = bits->get_next_bit_offset ();
 	    complain_about_uninit_range (loc, start_bit, next_bit,
 					 layout.get ());
 	  }
@@ -7389,11 +7414,12 @@ contains_uninit_p (const svalue *sval)
 	const compound_svalue *compound_sval
 	  = as_a <const compound_svalue *> (sval);
 
-	for (auto iter : *compound_sval)
+	for (auto iter = compound_sval->begin ();
+	     iter != compound_sval->end (); ++iter)
 	  {
-	    const svalue *sval = iter.m_sval;
+	    const svalue *inner_sval = iter.get_svalue ();
 	    if (const poisoned_svalue *psval
-		= sval->dyn_cast_poisoned_svalue ())
+		= inner_sval->dyn_cast_poisoned_svalue ())
 	      if (psval->get_poison_kind () == poison_kind::uninit)
 		return true;
 	  }

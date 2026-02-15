@@ -876,6 +876,9 @@ public:
      when we reduce a mask.  */
   tree reduc_vectype_for_mask;
 
+  /* The neutral operand to use, if any.  */
+  tree neutral_op;
+
   /* For INTEGER_INDUC_COND_REDUCTION, the initial value to be used.  */
   tree induc_cond_initial_val;
 
@@ -912,6 +915,7 @@ typedef class vect_reduc_info_s *vect_reduc_info;
 #define VECT_REDUC_INFO_VECTYPE_FOR_MASK(I) ((I)->reduc_vectype_for_mask)
 #define VECT_REDUC_INFO_FORCE_SINGLE_CYCLE(I) ((I)->force_single_cycle)
 #define VECT_REDUC_INFO_RESULT_POS(I) ((I)->reduc_result_pos)
+#define VECT_REDUC_INFO_NEUTRAL_OP(I) ((I)->neutral_op)
 
 /* Information about a reduction accumulator from the main loop that could
    conceivably be reused as the input to a reduction in an epilogue loop.  */
@@ -2607,7 +2611,7 @@ extern tree vect_get_smallest_scalar_type (stmt_vec_info, tree);
 extern opt_result vect_analyze_data_ref_dependences (loop_vec_info, unsigned int *);
 extern bool vect_slp_analyze_instance_dependence (vec_info *, slp_instance);
 extern opt_result vect_enhance_data_refs_alignment (loop_vec_info);
-extern opt_result vect_analyze_data_refs_alignment (loop_vec_info);
+extern void vect_analyze_data_refs_alignment (loop_vec_info);
 extern bool vect_slp_analyze_instance_alignment (vec_info *, slp_instance);
 extern opt_result vect_analyze_data_ref_accesses (vec_info *, vec<int> *);
 extern opt_result vect_prune_runtime_alias_test_list (loop_vec_info);
@@ -2674,7 +2678,7 @@ extern void vect_record_loop_len (loop_vec_info, vec_loop_lens *, unsigned int,
 				  tree, unsigned int);
 extern tree vect_get_loop_len (loop_vec_info, gimple_stmt_iterator *,
 			       vec_loop_lens *, unsigned int, tree,
-			       unsigned int, unsigned int);
+			       unsigned int, unsigned int, bool);
 extern tree vect_gen_loop_len_mask (loop_vec_info, gimple_stmt_iterator *,
 				    gimple_stmt_iterator *, vec_loop_lens *,
 				    unsigned int, tree, tree, unsigned int,

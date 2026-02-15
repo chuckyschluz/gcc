@@ -223,7 +223,7 @@ gfc_free_omp_clauses (gfc_omp_clauses *c)
   gfc_free_expr_list (c->wait_list);
   gfc_free_expr_list (c->tile_list);
   gfc_free_expr_list (c->sizes_list);
-  free (CONST_CAST (char *, c->critical_name));
+  free (const_cast<char *> (c->critical_name));
   if (c->assume)
     {
       free (c->assume->absent);
@@ -9890,6 +9890,12 @@ resolve_omp_clauses (gfc_code *code, gfc_omp_clauses *omp_clauses,
 				     &n->where);
 		      }
 		  }
+		if (list == OMP_LIST_MAP
+		    && (n->sym->attr.omp_groupprivate
+			|| n->sym->attr.omp_declare_target_local))
+		  gfc_error ("%qs argument to MAP clause at %L must not be a "
+			     "device-local variable, including GROUPPRIVATE",
+			     n->sym->name, &n->where);
 		if (openacc
 		    && list == OMP_LIST_MAP
 		    && (n->u.map.op == OMP_MAP_ATTACH

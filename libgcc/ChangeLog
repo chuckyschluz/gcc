@@ -1,3 +1,14 @@
+2026-02-06  Torbjörn SVENSSON  <torbjorn.svensson@foss.st.com>
+
+	* config/i386/gthr-win32.h: Replace CONST_CAST2 with expanded
+	expression where used.
+	* config/pa/gthr-dce.h: Likewise.
+
+2026-01-24  Xin Wang  <wangxinw@hygon.cn>
+
+	* sync.c: Replace UOItype with UTItype and use mode(TI) pass 16, not
+	8, to DEFINE macro.
+
 2026-01-13  Jakub Jelinek  <jakub@redhat.com>
 
 	PR libstdc++/123396
