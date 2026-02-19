@@ -4231,7 +4231,9 @@ static rtx
 expand_udiv_using_mult (rtx op0, rtx target, scalar_int_mode int_mode,
 			unsigned HOST_WIDE_INT d, int max_cost)
 {
-  int size = GET_MODE_BITSIZE (int_mode);
+  const int size = GET_MODE_BITSIZE (int_mode);
+  const unsigned int_mode_bias = 0;
+  const unsigned wider_mode_bias = 2;
 
   auto emit_common_seq = [&] (scalar_int_mode mode, int shift) -> rtx {
     rtx op0_p = shift > 0 ? expand_shift (RSHIFT_EXPR, int_mode, op0, shift,
@@ -4244,6 +4246,7 @@ expand_udiv_using_mult (rtx op0, rtx target, scalar_int_mode int_mode,
   {
     rtx result;
     rtx_insn *seq;
+    unsigned bias;
   };
 
   auto_vec<strat> strat_vec;
@@ -4258,10 +4261,56 @@ expand_udiv_using_mult (rtx op0, rtx target, scalar_int_mode int_mode,
       int ml_width = (ml == 0) ? 0 : (HOST_BITS_PER_WIDE_INT - clz_hwi (ml));
       int m_width = mh ? size + 1 : ml_width;
 
-      for (opt_scalar_int_mode mode_iter = opt_scalar_int_mode (int_mode);
-	   mode_iter.exists ();
-	   mode_iter = GET_MODE_WIDER_MODE (mode_iter.require ()))
-	{
+      /*
+      Attempt the distributed multiply-highpart-shift sequence. There is no
+      explicit requirement on the precision.
+      */
+      {
+        rtx t1 = NULL_RTX, result = NULL_RTX;
+        start_sequence ();
+        rtx op0_c = emit_common_seq (int_mode, pre_shift);
+        if (op0_c)
+          t1 = expmed_mult_highpart (int_mode, op0_c,
+                                     gen_int_mode (ml, int_mode), NULL_RTX, 1,
+                                     MAX_COST);
+        if (mh)
+          {
+            /*
+            T1 + OP0 is assumed to overflow. the following identity is used:
+            (T1 + OP0) >> 1 = T1 + ((OP0 - T1) >> 1) , where OP0 >= T1
+            */
+            rtx t2 = NULL_RTX, t3 = NULL_RTX, t4 = NULL_RTX;
+            if (t1)
+              t2 = expand_binop (int_mode, sub_optab, op0_c, t1, NULL_RTX, 1,
+                                 OPTAB_DIRECT);
+            if (t2)
+              t3 = expand_shift (RSHIFT_EXPR, int_mode, t2, 1, NULL_RTX, 1);
+            if (t3)
+              t4 = expand_binop (int_mode, add_optab, t1, t3, NULL_RTX, 1,
+                                 OPTAB_DIRECT);
+            if (t4)
+              result = expand_shift (RSHIFT_EXPR, int_mode, t4, post_shift - 1,
+                                     target, 1);
+            /* QUOTIENT = (T1 + ((OP0 - T1) >> 1)) >> POST_SHIFT - 1 */
+          }
+        else
+          {
+            if (t1)
+              result = expand_shift (RSHIFT_EXPR, int_mode, t1, post_shift,
+                                     target, 1);
+            /* QUOTIENT = ((ML * OP0) >> SIZE) >> POST_SHIFT */
+          }
+
+        rtx_insn *seq = end_sequence ();
+
+        if (result && seq)
+          strat_vec.safe_push ({ result, seq, int_mode_bias });
+      }
+
+      for (opt_scalar_int_mode mode_iter = GET_MODE_WIDER_MODE (int_mode);
+           mode_iter.exists ();
+           mode_iter = GET_MODE_WIDER_MODE (mode_iter.require ()))
+        {
 	  scalar_int_mode compute_mode = mode_iter.require ();
 	  int prec = GET_MODE_PRECISION (compute_mode);
 	  if (prec > HOST_BITS_PER_WIDE_INT)
@@ -4288,12 +4337,14 @@ expand_udiv_using_mult (rtx op0, rtx target, scalar_int_mode int_mode,
 	      if (t1)
 		result = expand_shift (RSHIFT_EXPR, compute_mode, t1,
 				       size + post_shift, NULL_RTX, 1);
-	      /* QUOTIENT = (((MH << SIZE) + ML) * OP0) >> SIZE + POST_SHIFT */
+              if(result)
+              convert_move (target, result, 1);
+              /* QUOTIENT = (((MH << SIZE) + ML) * OP0) >> SIZE + POST_SHIFT */
 	      rtx_insn *seq = end_sequence ();
 
 	      if (result && seq)
-		strat_vec.safe_push ({result, seq});
-	    }
+                strat_vec.safe_push ({ result, seq, wider_mode_bias });
+            }
 
 	  if (mh)
 	    {
@@ -4324,61 +4375,21 @@ expand_udiv_using_mult (rtx op0, rtx target, scalar_int_mode int_mode,
 		  if (t3)
 		    result = expand_shift (RSHIFT_EXPR, compute_mode, t3,
 					   post_shift, NULL_RTX, 1);
-		  /* QUOTIENT = ((OP0 + (ML * OP0) >> SIZE) >> POST_SHIFT */
+                  if(result)
+                  convert_move (target, result, 1);
+                  /* QUOTIENT = ((OP0 + (ML * OP0) >> SIZE) >> POST_SHIFT */
 		  rtx_insn *seq = end_sequence ();
 
 		  if (result && seq)
-		    strat_vec.safe_push ({result, seq});
-		}
+                    strat_vec.safe_push ({ result, seq, wider_mode_bias });
+                }
 	    }
 	}
-      /*
-      Fallback to the distributed multiply-highpart-shift sequence. There is no
-      explicit requirement on the precision.
-      */
-      rtx t1 = NULL_RTX, result = NULL_RTX;
-      start_sequence ();
-      rtx op0_c = emit_common_seq (int_mode, pre_shift);
-      if (op0_c)
-	t1 = expmed_mult_highpart (int_mode, op0_c, gen_int_mode (ml, int_mode),
-				   NULL_RTX, 1, MAX_COST);
-      if (mh)
-	{
-	  /*
-	  T1 + OP0 is assumed to overflow. the following identity is used:
-	  (T1 + OP0) >> 1 = T1 + ((OP0 - T1) >> 1) , where OP0 >= T1
-	  */
-	  rtx t2 = NULL_RTX, t3 = NULL_RTX, t4 = NULL_RTX;
-	  if (t1)
-	    t2 = expand_binop (int_mode, sub_optab, op0_c, t1, NULL_RTX, 1,
-			       OPTAB_DIRECT);
-	  if (t2)
-	    t3 = expand_shift (RSHIFT_EXPR, int_mode, t2, 1, NULL_RTX, 1);
-	  if (t3)
-	    t4 = expand_binop (int_mode, add_optab, t1, t3, NULL_RTX, 1,
-			       OPTAB_DIRECT);
-	  if (t4)
-	    result = expand_shift (RSHIFT_EXPR, int_mode, t4, post_shift - 1,
-				   NULL_RTX, 1);
-	  /* QUOTIENT = (T1 + ((OP0 - T1) >> 1)) >> POST_SHIFT - 1 */
-	}
-      else
-	{
-	  if (t1)
-	    result = expand_shift (RSHIFT_EXPR, int_mode, t1, post_shift,
-				   NULL_RTX, 1);
-	  /* QUOTIENT = ((ML * OP0) >> SIZE) >> POST_SHIFT */
-	}
-
-      rtx_insn *seq = end_sequence ();
-
-      if (result && seq)
-	strat_vec.safe_push ({result, seq});
 
       /* We can do better for even divisors using an initial right shift. Set
        * PRE_SHIFT to CTZ(D) and run through the loop again. */
-      if ((d & 1) == 0)
-	{
+      if (mh && (d & 1) == 0)
+        {
 	  pre_shift = ctz_or_zero (d);
 	  d = d >> pre_shift;
 	  gcc_assert (d & 1);
@@ -4397,15 +4408,8 @@ expand_udiv_using_mult (rtx op0, rtx target, scalar_int_mode int_mode,
     {
       rtx this_result = strat_vec[i].result;
       rtx_insn *this_seq = strat_vec[i].seq;
-      unsigned this_cost = seq_cost (this_seq, speed);
-
-      /* Estimate the final move cost without modifying the real target */
-      start_sequence ();
-      rtx fake_reg = gen_raw_REG (int_mode, LAST_VIRTUAL_REGISTER + 1);
-      convert_move (fake_reg, this_result, 1);
-      rtx_insn *move_insn = end_sequence ();
-
-      this_cost += seq_cost (move_insn, speed);
+      unsigned this_bias = strat_vec[i].bias;
+      unsigned this_cost = seq_cost (this_seq, speed) + this_bias;
 
       if (this_cost < cost)
 	{
@@ -4415,10 +4419,9 @@ expand_udiv_using_mult (rtx op0, rtx target, scalar_int_mode int_mode,
 	}
     }
 
-  if (result && seq && target)
+  if (seq)
     {
       emit_insn (seq);
-      convert_move (target, result, 1);
       return target;
     }
 
