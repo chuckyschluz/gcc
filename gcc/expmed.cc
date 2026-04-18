@@ -4227,14 +4227,8 @@ INT_MODE and successively wider modes. Choose the method with the lowest
 cost.
 */
 
-static rtx
-expand_udiv_using_mult (rtx op0, rtx target, scalar_int_mode int_mode,
-			unsigned HOST_WIDE_INT d, int max_cost)
-{
-  const int size = GET_MODE_BITSIZE (int_mode);
-  const unsigned int_mode_bias = 0;
-  const unsigned wider_mode_bias = 2;
-
+static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
+                                  unsigned HOST_WIDE_INT d, int max_cost) {
   auto emit_common_seq = [&] (scalar_int_mode mode, int shift) -> rtx {
     rtx op0_p = shift > 0 ? expand_shift (RSHIFT_EXPR, int_mode, op0, shift,
 					  NULL_RTX, 1)
@@ -4246,157 +4240,152 @@ expand_udiv_using_mult (rtx op0, rtx target, scalar_int_mode int_mode,
   {
     rtx result;
     rtx_insn *seq;
-    unsigned bias;
   };
 
+  int size = GET_MODE_BITSIZE(int_mode);
   auto_vec<strat> strat_vec;
 
-  for (int pre_shift = 0;;)
-    {
-      unsigned HOST_WIDE_INT ml;
-      int post_shift;
-      unsigned HOST_WIDE_INT mh
-	= choose_multiplier (d, size, size - pre_shift, &ml, &post_shift);
-      gcc_assert (!(mh && pre_shift));
-      int ml_width = (ml == 0) ? 0 : (HOST_BITS_PER_WIDE_INT - clz_hwi (ml));
-      int m_width = mh ? size + 1 : ml_width;
-
-      /*
-      Attempt the distributed multiply-highpart-shift sequence. There is no
-      explicit requirement on the precision.
-      */
-      {
-        rtx t1 = NULL_RTX, result = NULL_RTX;
-        start_sequence ();
-        rtx op0_c = emit_common_seq (int_mode, pre_shift);
-        if (op0_c)
-          t1 = expmed_mult_highpart (int_mode, op0_c,
-                                     gen_int_mode (ml, int_mode), NULL_RTX, 1,
-                                     MAX_COST);
-        if (mh)
-          {
-            /*
-            T1 + OP0 is assumed to overflow. the following identity is used:
-            (T1 + OP0) >> 1 = T1 + ((OP0 - T1) >> 1) , where OP0 >= T1
-            */
-            rtx t2 = NULL_RTX, t3 = NULL_RTX, t4 = NULL_RTX;
-            if (t1)
-              t2 = expand_binop (int_mode, sub_optab, op0_c, t1, NULL_RTX, 1,
-                                 OPTAB_DIRECT);
-            if (t2)
-              t3 = expand_shift (RSHIFT_EXPR, int_mode, t2, 1, NULL_RTX, 1);
-            if (t3)
-              t4 = expand_binop (int_mode, add_optab, t1, t3, NULL_RTX, 1,
-                                 OPTAB_DIRECT);
-            if (t4)
-              result = expand_shift (RSHIFT_EXPR, int_mode, t4, post_shift - 1,
-                                     target, 1);
-            /* QUOTIENT = (T1 + ((OP0 - T1) >> 1)) >> POST_SHIFT - 1 */
-          }
-        else
-          {
-            if (t1)
-              result = expand_shift (RSHIFT_EXPR, int_mode, t1, post_shift,
-                                     target, 1);
-            /* QUOTIENT = ((ML * OP0) >> SIZE) >> POST_SHIFT */
-          }
-
-        rtx_insn *seq = end_sequence ();
-
-        if (result && seq)
-          strat_vec.safe_push ({ result, seq, int_mode_bias });
-      }
-
-      for (opt_scalar_int_mode mode_iter = GET_MODE_WIDER_MODE (int_mode);
-           mode_iter.exists ();
-           mode_iter = GET_MODE_WIDER_MODE (mode_iter.require ()))
-        {
-	  scalar_int_mode compute_mode = mode_iter.require ();
-	  int prec = GET_MODE_PRECISION (compute_mode);
-	  if (prec > HOST_BITS_PER_WIDE_INT)
-	    break;
-	  /*
-	  Attempt the direct multiply-shift sequence. OP0 is SIZE - PRE_SHIFT
-	  bits and the multiplier is M_WIDTH bits. Therefore, the multiplication
-	  requires PREC >= SIZE - PRE_SHIFT + M_WIDTH.
-	  */
-	  if (prec >= (size - pre_shift + m_width)
-	      && prec > (size + post_shift))
-	    {
-	      wide_int ml_wi = wi::zext (wi::uhwi (ml, prec), size);
-	      wide_int mh_wi = wi::lshift (wi::uhwi (mh, prec), size);
-	      wide_int m_wi = wi::bit_or (mh_wi, ml_wi);
-	      rtx t1 = NULL_RTX, result = NULL_RTX;
-
-	      start_sequence ();
-	      rtx op0_c = emit_common_seq (compute_mode, pre_shift);
-	      if (op0_c)
-		t1 = expand_binop (compute_mode, smul_optab, op0_c,
-				   immed_wide_int_const (m_wi, compute_mode),
-				   NULL_RTX, 1, OPTAB_DIRECT);
-	      if (t1)
-		result = expand_shift (RSHIFT_EXPR, compute_mode, t1,
-				       size + post_shift, NULL_RTX, 1);
-              if(result)
-              convert_move (target, result, 1);
-              /* QUOTIENT = (((MH << SIZE) + ML) * OP0) >> SIZE + POST_SHIFT */
-	      rtx_insn *seq = end_sequence ();
-
-	      if (result && seq)
-                strat_vec.safe_push ({ result, seq, wider_mode_bias });
-            }
-
-	  if (mh)
-	    {
-	      /*
-	      Attempt the distributed multiply-shift sequence. OP0 is SIZE bits
-	      and the lower multiplier is ML_WIDTH bits. Therefore, the
-	      multiplication requires PREC >= SIZE + ML_WIDTH. The sum
-	      requires PREC > SIZE, which is satisfied by the previous
-	      requirement.
-	      */
-	      if (prec >= (size + ml_width) && prec > (size + post_shift))
-		{
-		  rtx t1 = NULL_RTX, t2 = NULL_RTX, t3 = NULL_RTX,
-		      result = NULL_RTX;
-
-		  start_sequence ();
-		  rtx op0_c = emit_common_seq (compute_mode, 0);
-		  if (op0_c)
-		    t1 = expand_binop (compute_mode, smul_optab, op0_c,
-				       gen_int_mode (ml, compute_mode),
-				       NULL_RTX, 1, OPTAB_DIRECT);
-		  if (t1)
-		    t2 = expand_shift (RSHIFT_EXPR, compute_mode, t1, size,
-				       NULL_RTX, 1);
-		  if (t2)
-		    t3 = expand_binop (compute_mode, add_optab, op0_c, t2,
-				       NULL_RTX, 1, OPTAB_DIRECT);
-		  if (t3)
-		    result = expand_shift (RSHIFT_EXPR, compute_mode, t3,
-					   post_shift, NULL_RTX, 1);
-                  if(result)
-                  convert_move (target, result, 1);
-                  /* QUOTIENT = ((OP0 + (ML * OP0) >> SIZE) >> POST_SHIFT */
-		  rtx_insn *seq = end_sequence ();
-
-		  if (result && seq)
-                    strat_vec.safe_push ({ result, seq, wider_mode_bias });
-                }
-	    }
-	}
-
-      /* We can do better for even divisors using an initial right shift. Set
-       * PRE_SHIFT to CTZ(D) and run through the loop again. */
-      if (mh && (d & 1) == 0)
-        {
-	  pre_shift = ctz_or_zero (d);
-	  d = d >> pre_shift;
-	  gcc_assert (d & 1);
-	}
-      else
-	break;
+  unsigned HOST_WIDE_INT ml;
+  int post_shift, pre_shift = 0;
+  unsigned HOST_WIDE_INT mh =
+      choose_multiplier(d, size, size, &ml, &post_shift);
+  /*
+  We can do better for even divisors using an initial right shift. Set
+  PRE_SHIFT to CTZ(D) and run through the loop again.
+  */
+  if (mh && (d & 1) == 0) {
+    pre_shift = ctz_or_zero(d);
+    mh = choose_multiplier(d, size, size - pre_shift, &ml, &post_shift);
+    gcc_assert(!(mh && pre_shift));
+  }
+  /*
+  Attempt the distributed multiply-highpart-shift sequence. There is no
+  explicit requirement on the precision.
+  */
+  {
+    rtx t1 = NULL_RTX, result = NULL_RTX;
+    start_sequence();
+    rtx op0_c = emit_common_seq(int_mode, pre_shift);
+    if (op0_c) {
+      t1 = expmed_mult_highpart(int_mode, op0_c, gen_int_mode(ml, int_mode),
+                                NULL_RTX, 1, MAX_COST);
     }
+    if (mh) {
+      /*
+      T1 + OP0 may overflow. The following identity is used:
+      (T1 + OP0) >> 1 = T1 + ((OP0 - T1) >> 1) , where OP0 >= T1
+      */
+      rtx t2 = NULL_RTX, t3 = NULL_RTX, t4 = NULL_RTX;
+      if (t1) {
+        t2 = expand_binop(int_mode, sub_optab, op0_c, t1, NULL_RTX, 1,
+                          OPTAB_DIRECT);
+      }
+      if (t2) {
+        t3 = expand_shift(RSHIFT_EXPR, int_mode, t2, 1, NULL_RTX, 1);
+      }
+      if (t3) {
+        t4 = expand_binop(int_mode, add_optab, t1, t3, NULL_RTX, 1,
+                          OPTAB_DIRECT);
+      }
+      if (t4) {
+        /* QUOTIENT = (T1 + ((OP0 - T1) >> 1)) >> POST_SHIFT - 1 */
+        result =
+            expand_shift(RSHIFT_EXPR, int_mode, t4, post_shift - 1, target, 1);
+      }
+    } else {
+      if (t1) {
+        /* QUOTIENT = ((ML * OP0) >> SIZE) >> POST_SHIFT */
+        result = expand_shift(RSHIFT_EXPR, int_mode, t1, post_shift, target, 1);
+      }
+    }
+    rtx_insn *seq = end_sequence();
+    if (result && seq) {
+      strat_vec.safe_push({result, seq});
+    }
+  }
+
+  int ml_width = (ml == 0) ? 0 : (HOST_BITS_PER_WIDE_INT - clz_hwi(ml));
+  int m_width = mh ? size + 1 : ml_width;
+
+  for (opt_scalar_int_mode mode_iter = GET_MODE_WIDER_MODE(int_mode);
+       mode_iter.exists();
+       mode_iter = GET_MODE_WIDER_MODE(mode_iter.require())) {
+    scalar_int_mode mode = mode_iter.require();
+    int prec = GET_MODE_PRECISION(mode);
+    if (prec > HOST_BITS_PER_WIDE_INT) {
+      break;
+    }
+    /*
+    Attempt the direct multiply-shift sequence. OP0 is SIZE - PRE_SHIFT
+    bits and the multiplier is M_WIDTH bits. Therefore, the multiplication
+    requires PREC >= SIZE - PRE_SHIFT + M_WIDTH.
+    */
+    if (prec >= (size - pre_shift + m_width) && prec > (size + post_shift)) {
+      wide_int ml_wi = wi::zext(wi::uhwi(ml, prec), size);
+      wide_int mh_wi = wi::lshift(wi::uhwi(mh, prec), size);
+      wide_int m_wi = wi::bit_or(mh_wi, ml_wi);
+      rtx t1 = NULL_RTX, result = NULL_RTX;
+
+      start_sequence();
+      rtx op0_c = emit_common_seq(compute_mode, pre_shift);
+      if (op0_c) {
+        t1 = expand_binop(compute_mode, smul_optab, op0_c,
+                          immed_wide_int_const(m_wi, compute_mode), NULL_RTX, 1,
+                          OPTAB_DIRECT);
+      }
+      if (t1) {
+        /* QUOTIENT = (((MH << SIZE) + ML) * OP0) >> SIZE + POST_SHIFT */
+        result = expand_shift(RSHIFT_EXPR, compute_mode, t1, size + post_shift,
+                              NULL_RTX, 1);
+      }
+      if (result) {
+        convert_move(target, result, 1);
+      }
+      rtx_insn *seq = end_sequence();
+      if (result && seq) {
+        strat_vec.safe_push({result, seq});
+      }
+    }
+
+    /*
+    The following optimization applies to scenarios where MH == 1.
+    Attempt the distributed multiply-shift sequence. OP0 is SIZE bits
+    and the lower multiplier is ML_WIDTH bits. Therefore, the
+    multiplication requires PREC >= SIZE + ML_WIDTH. The sum
+    requires PREC > SIZE, which is satisfied by the previous
+    requirement.
+    */
+    if (mh && prec >= (size + ml_width) && prec > (size + post_shift)) {
+      rtx t1 = NULL_RTX, t2 = NULL_RTX, t3 = NULL_RTX, result = NULL_RTX;
+
+      start_sequence();
+      rtx op0_c = emit_common_seq(compute_mode, 0);
+      if (op0_c) {
+        t1 = expand_binop(compute_mode, smul_optab, op0_c,
+                          gen_int_mode(ml, compute_mode), NULL_RTX, 1,
+                          OPTAB_DIRECT);
+      }
+      if (t1) {
+        t2 = expand_shift(RSHIFT_EXPR, compute_mode, t1, size, NULL_RTX, 1);
+      }
+      if (t2) {
+        t3 = expand_binop(compute_mode, add_optab, op0_c, t2, NULL_RTX, 1,
+                          OPTAB_DIRECT);
+      }
+      if (t3) {
+        /* QUOTIENT = ((OP0 + (ML * OP0) >> SIZE) >> POST_SHIFT */
+        result = expand_shift(RSHIFT_EXPR, compute_mode, t3, post_shift,
+                              NULL_RTX, 1);
+      }
+      if (result) {
+        convert_move(target, result, 1);
+      }
+      rtx_insn *seq = end_sequence();
+      if (result && seq) {
+        strat_vec.safe_push({result, seq});
+      }
+    }
+  }
 
   rtx result = NULL_RTX;
   rtx_insn *seq = NULL;
@@ -4404,26 +4393,22 @@ expand_udiv_using_mult (rtx op0, rtx target, scalar_int_mode int_mode,
   unsigned cost = max_cost;
   bool speed = optimize_insn_for_speed_p ();
 
-  for (unsigned i = 0; i < strat_vec.length (); i++)
-    {
-      rtx this_result = strat_vec[i].result;
-      rtx_insn *this_seq = strat_vec[i].seq;
-      unsigned this_bias = strat_vec[i].bias;
-      unsigned this_cost = seq_cost (this_seq, speed) + this_bias;
+  for (unsigned i = 0; i < strat_vec.length(); i++) {
+    rtx this_result = strat_vec[i].result;
+    rtx_insn *this_seq = strat_vec[i].seq;
+    unsigned this_cost = seq_cost(this_seq, speed);
 
-      if (this_cost < cost)
-	{
-	  result = this_result;
-	  seq = this_seq;
-	  cost = this_cost;
-	}
+    if (this_cost < cost) {
+      result = this_result;
+      seq = this_seq;
+      cost = this_cost;
     }
+  }
 
-  if (seq)
-    {
-      emit_insn (seq);
-      return target;
-    }
+  if (seq) {
+    emit_insn(seq);
+    return target;
+  }
 
   return NULL_RTX;
 }
