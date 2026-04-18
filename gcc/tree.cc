@@ -12333,6 +12333,9 @@ block_ultimate_origin (const_tree block)
 bool
 tree_nop_conversion_p (const_tree outer_type, const_tree inner_type)
 {
+  if (!inner_type || inner_type == error_mark_node)
+    return false;
+
   /* Do not strip casts into or out of differing address spaces.  */
   if (POINTER_TYPE_P (outer_type)
       && TYPE_ADDR_SPACE (TREE_TYPE (outer_type)) != ADDR_SPACE_GENERIC)
@@ -12382,8 +12385,6 @@ tree_nop_conversion (const_tree exp)
 
   outer_type = TREE_TYPE (exp);
   inner_type = TREE_TYPE (TREE_OPERAND (exp, 0));
-  if (!inner_type || inner_type == error_mark_node)
-    return false;
 
   return tree_nop_conversion_p (outer_type, inner_type);
 }
@@ -15295,6 +15296,26 @@ verify_type_context (location_t loc, type_context_kind context,
   gcc_assert (TYPE_P (type));
   return (!targetm.verify_type_context
 	  || targetm.verify_type_context (loc, context, type, silent_p));
+}
+
+/* Callback of walk_tree telling whether the current tree pointed by TP is the
+   one provided as DATA.  */
+
+static tree
+find_tree_1 (tree *tp, int *walk_subtrees ATTRIBUTE_UNUSED, void *data)
+{
+  if (*tp == data)
+    return (tree) data;
+  else
+    return NULL;
+}
+
+/* Return whether SEARCH is a subtree of TOP.  */
+
+bool
+find_tree (tree top, tree search)
+{
+  return walk_tree_without_duplicates (&top, find_tree_1, search) != 0;
 }
 
 /* Return true if NEW_ASM and DELETE_ASM name a valid pair of new and

@@ -74,7 +74,7 @@ cbl_dialect_str(cbl_dialect_t dialect)  {
   }
   
   return "???";
-};
+}
 
 // Dialects may be combined. 
 extern unsigned int cbl_dialects;
@@ -248,11 +248,15 @@ enum symbol_type_t {
   SymLocale, 
 };
 
-// The ISO specification says alphanumeric literals have a maximum length of
-// 8,191 characters.  It seems to be silent on the length of alphanumeric data
-// items.  Our implementation requires a maximum length, so we chose to make it
-// the same.
-#define MAXIMUM_ALPHA_LENGTH 8192
+// From Enterprise COBOL for z/OS 6.4 Language Reference, Appendix B.
+// ISO specifies no limit in 13.18.40.3 Syntax rules.
+// CobolCraft sometimes needs 2,100,000 or about 2 MB. 
+#ifdef COBOL_MAXIMUM_ALPHA_LENGTH
+# define MAXIMUM_ALPHA_LENGTH size_t(COBOL_MAXIMUM_ALPHA_LENGTH)
+#else 
+# define IBM_MAXIMUM_ALPHA_LENGTH (size_t(1) << 31)
+# define MAXIMUM_ALPHA_LENGTH IBM_MAXIMUM_ALPHA_LENGTH
+#endif
 
 class cbl_field_data_t {
   uint32_t nbyte;            // allocated space
@@ -933,6 +937,11 @@ struct cbl_field_t {
 
 const cbl_field_t * cbl_figconst_field_of( const char *value );
 
+typedef std::list<cbl_field_t*> symbol_temporaries_t;
+
+symbol_temporaries_t& symbol_temporaries();
+symbol_temporaries_t symbol_temporary_alphanumerics();
+
 // Necessary forward referencea
 struct cbl_label_t;
 struct cbl_refer_t;
@@ -1165,7 +1174,24 @@ struct cbl_proc_t {
   struct cbl_proc_addresses_t top;
   struct cbl_proc_addresses_t exit;
   struct cbl_proc_addresses_t bottom;
-  tree alter_location;  // The altered value if this paragraph is the target of an ALTER
+
+  // The following members implement the return location for a PERFORM to this
+  // procedure.  The dispatch_switch_label is where the switch() statement for
+  // this procedure is found; the dispatch_switch_goto is how you get there.
+  // The switch statement itself is made up of GOTO statements built from the
+  // label_decls found in pseudo_return_decls.
+  tree dispatch_switch_goto;
+  tree dispatch_switch_label;
+  std::vector<tree> pseudo_return_decls;
+
+  // The following members do the analogous process for a paragraph that is
+  // the target of an ALTER statement
+  tree alter_switch_goto;
+  tree alter_switch_label;
+  tree no_alter_goto;
+  tree no_alter_label;
+  std::vector<tree> alter_decls;
+  tree alter_index;  // The integer index to the switch statement
 };
 
 struct cbl_label_addresses_t {
@@ -1658,8 +1684,9 @@ struct function_descr_t {
   char cname[48];
   char types[8];
   std::vector<function_descr_arg_t> linkage_fields;
-  cbl_field_type_t ret_type;
-
+  cbl_field_type_t ret_type;  // When the ret_type is FldInvalid, that
+                              // indicates the function takes on the type of
+                              // the first argument.
   static function_descr_t init( const char name[] ) {
     function_descr_t descr = {};
     if( -1 == snprintf( descr.name, sizeof(descr.name), "%s", name ) ) {
@@ -2268,6 +2295,7 @@ symbol_elem_of( const cbl_field_t *field ) {
 symbol_elem_t * symbols_begin( size_t first = 0 );
 symbol_elem_t * symbols_end(void);
 cbl_field_t   * symbol_redefines( const cbl_field_t *field );
+cbl_field_t   * symbol_redefines_root( const cbl_field_t *field );
 
 void build_symbol_map();
 bool update_symbol_map( symbol_elem_t *e );
@@ -2800,6 +2828,8 @@ symbol_elem_t * symbol_file_add( size_t program,
 symbol_elem_t * symbol_section_add( size_t program,
 				    cbl_section_t *section );
 
+void symbol_registers_add();
+
 void symbol_field_location( size_t ifield, const YYLTYPE& loc );
 YYLTYPE symbol_field_location( size_t ifield );
 
@@ -3080,5 +3110,19 @@ size_t count_characters(const char *in, size_t length);
 void current_enabled_ecs( tree ena );
 
 bool validate_numeric_edited(cbl_field_t *field);
+
+cbl_field_t *new_alphanumeric(const cbl_name_t name=nullptr,
+                              cbl_encoding_t encoding=no_encoding_e );
+
+
+// ENABLE_HIJACKING allows for code generation to be "hijacked" when the
+// program-id is "dubner" or "hijack".  See the mainline code in genapi.cc.
+
+// To enable hijacking, use
+// 
+//     make ... CPPFLAGS=-DENABLE_HIJACKING
+//
+// taking care to recaptulate whatever CPPFLAGS were set when configure was
+// run.
 
 #endif

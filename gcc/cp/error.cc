@@ -875,11 +875,11 @@ dump_type (cxx_pretty_printer *pp, tree t, int flags)
       break;
 
     case NULLPTR_TYPE:
-      pp_string (pp, "std::nullptr_t");
+      pp_cxx_ws_string (pp, "std::nullptr_t");
       break;
 
     case META_TYPE:
-      pp_string (pp, "std::meta::info");
+      pp_cxx_ws_string (pp, "std::meta::info");
       break;
 
     case SPLICE_SCOPE:
@@ -3337,6 +3337,13 @@ dump_expr (cxx_pretty_printer *pp, tree t, int flags)
 	  dump_decl (pp, h, flags);
 	else if (TYPE_P (h))
 	  dump_type (pp, h, flags);
+	else if (TREE_CODE (h) == TREE_VEC)
+	  {
+	    pp_format_decoder (pp) = cp_printer;
+	    pp->set_format_postprocessor
+	      (std::make_unique<cxx_format_postprocessor> ());
+	    dump_data_member_spec (pp, h);
+	  }
 	else
 	  dump_expr (pp, h, flags);
 	break;
@@ -4006,6 +4013,8 @@ inform_tree_category (tree t)
     inform (loc, "but %qE is a function template", t);
   else if (DECL_CLASS_TEMPLATE_P (t))
     inform (loc, "but %qE is a class template", t);
+  else if (variable_template_p (t))
+    inform (loc, "but %qE is a variable template", t);
   else if (TREE_CODE (t) == NAMESPACE_DECL)
     inform (loc, "but %qE is a namespace", t);
   else if (TREE_CODE (t) == CONST_DECL && !DECL_TEMPLATE_PARM_P (t))
@@ -4091,13 +4100,18 @@ public:
 		     bool show_locus = false)
   : m_text_output (text_output),
     m_loc (loc),
-    m_show_locus (show_locus)
+    m_show_locus (show_locus),
+    m_nesting_level (text_output.get_context ().get_diagnostic_nesting_level ()),
+    m_location_printed (false)
   {
     char *indent = m_text_output.build_indent_prefix (true);
     pp_verbatim (m_text_output.get_printer (), indent);
     free (indent);
-    if (!m_text_output.show_nesting_p ())
-      print_location (m_text_output, m_loc);
+    if (m_nesting_level == 0 || !m_text_output.show_nesting_p ())
+      {
+	print_location (m_text_output, m_loc);
+	m_location_printed = true;
+      }
   }
   ~auto_context_line ()
   {
@@ -4107,9 +4121,13 @@ public:
 	if (m_text_output.show_locations_in_nesting_p ())
 	  {
 	    char *indent = m_text_output.build_indent_prefix (false);
-	    pp_verbatim (pp, indent);
-	    print_location (m_text_output, m_loc);
-	    pp_newline (pp);
+	    if (!m_location_printed)
+	      {
+		pp_verbatim (pp, indent);
+		print_location (m_text_output, m_loc);
+		pp_newline (pp);
+		m_location_printed = true;
+	      }
 
 	    char *saved_prefix = pp_take_prefix (pp);
 	    pp_set_prefix (pp, indent);
@@ -4137,6 +4155,8 @@ private:
   diagnostics::text_sink &m_text_output;
   location_t m_loc;
   bool m_show_locus;
+  int m_nesting_level;
+  bool m_location_printed;
 };
 
 /* Helper function of print_instantiation_partial_context() that

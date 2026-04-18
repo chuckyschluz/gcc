@@ -17,6 +17,7 @@ struct B {};
 struct S : B {
   int mem;
   int : 0;
+  union { int a; };
 };
 struct T {
   T () {}
@@ -106,6 +107,7 @@ foo (int a, const long b, T c, int d[4], T &e)
   static_assert (display_string_of (^^S) == "S");
   static_assert (display_string_of (^^S::mem) == "S::mem");
   static_assert (display_string_of (members_of (^^S, ctx)[1]) == "S::<unnamed bit-field>");
+  static_assert (display_string_of (nonstatic_data_members_of (^^S, ctx)[1]) == "S::<anonymous union>");
   static_assert (display_string_of (^^TCls) == "template<auto <anonymous> > struct TCls");
   static_assert (display_string_of (^^TFn) == "template<auto <anonymous> > void TFn()");
   static_assert (display_string_of (^^TVar) == "template<auto <anonymous> > int TVar<<anonymous> >");
@@ -113,10 +115,11 @@ foo (int a, const long b, T c, int d[4], T &e)
   static_assert (display_string_of (^^NSAlias) == "NSAlias");
   static_assert (display_string_of (^^NS) == "NS");
   static_assert (display_string_of (bases_of (^^S, ctx)[0]) == "S: B");
-  static_assert (display_string_of (data_member_spec (^^int, { .name = "member", .alignment = 128, .no_unique_address = true })) == "(int, member, 128, , true)");
-  static_assert (display_string_of (data_member_spec (^^const int, { .name = "member", .bit_width = 6 })) == "(const int, member, , 6, false)");
-  static_assert (display_string_of (data_member_spec (^^int, { .bit_width = 0 })) == "(int, , , 0, false)");
-  static_assert (display_string_of (data_member_spec (^^long, { .bit_width = 5 })) == "(long int, , , 5, false)");
+  static_assert (display_string_of (data_member_spec (^^int, { .name = "member", .alignment = 128, .no_unique_address = true })) == "(int, member, 128, , true, {})");
+  static_assert (display_string_of (data_member_spec (^^const int, { .name = "member", .bit_width = 6 })) == "(const int, member, , 6, false, {})");
+  static_assert (display_string_of (data_member_spec (^^int, { .bit_width = 0 })) == "(int, , , 0, false, {})");
+  static_assert (display_string_of (data_member_spec (^^long, { .bit_width = 5 })) == "(long int, , , 5, false, {})");
+  static_assert (display_string_of (data_member_spec (^^int, { .name = "_", .annotations = { reflect_constant (42), reflect_constant (42.5) }})) == "(int, _, , , false, {42, 4.25e+1})");
   static_assert (display_string_of (annotations_of (^^bar)[0]) == "[[=1]]");
   static_assert (display_string_of (annotations_of (^^bar)[1]) == "[[=AN{1, 42, ' '}]]");
   static_assert (display_string_of (^^int) == "int");
@@ -145,6 +148,7 @@ namespace NS5 {
   struct S : B {
     int mem;
     int : 0;
+    union { int a; };
   };
   struct T {
     T () {}
@@ -212,6 +216,7 @@ namespace NS5 {
     static_assert (display_string_of (^^S) == "NS5::S");
     static_assert (display_string_of (^^S::mem) == "NS5::S::mem");
     static_assert (display_string_of (members_of (^^S, ctx)[1]) == "NS5::S::<unnamed bit-field>");
+    static_assert (display_string_of (nonstatic_data_members_of (^^S, ctx)[1]) == "NS5::S::<anonymous union>");
     static_assert (display_string_of (^^TCls) == "template<auto <anonymous> > struct NS5::TCls");
     static_assert (display_string_of (^^TFn) == "template<auto <anonymous> > void NS5::TFn()");
     static_assert (display_string_of (^^TVar) == "template<auto <anonymous> > int NS5::TVar<<anonymous> >");

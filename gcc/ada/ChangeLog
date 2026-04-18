@@ -1,3 +1,261 @@
+2026-04-17  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/107392
+	* sem_res.adb: Add clauses for Ttypes.
+	(Resolve.Patch_Up_Value): Do not try to convert real literals that
+	do not fit in Universal_Integer.
+
+2026-04-17  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/107391
+	* urealp.adb (Decimal_Exponent_Hi): Check that the denominator is
+	in range before invoking UI_To_Int on it, and cope with failure.
+	(Decimal_Exponent_Lo): Likewise.
+
+2026-04-15  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/105212
+	* exp_aggr.adb (Build_Array_Aggr_Code): If the aggregate comes from
+	source, call Set_Referenced_Modified on the target.
+
+2026-04-15  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/87170
+	* sem_res.adb (Resolve_String_Literal): Copy Comes_From_Source from
+	the string literal to the character literals.
+
+2026-04-13  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/95452
+	* libgnat/g-heasor.adb (Sort.Sift): Add guard against overflow.
+	* libgnat/g-hesorg.adb (Sort.Sift): Likewise.
+	* libgnat/g-hesora.adb (Sort.Sift): Likewise.  Restore consistency.
+
+2026-04-13  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/77535
+	* libgnat/s-pehage.adb (New_Word): Rebase the input.
+
+2026-04-12  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124836
+	* adaint.c [__MINGW32__]: Do not include mingw32.h twice, and also
+	include sys/param.h.
+
+2026-04-07  Sandra Loosemore  <sloosemore@baylibre.com>
+
+	PR other/124784
+	* gcc-interface/lang.opt.urls: Regenerated.
+
+2026-04-05  Eric Botcazou  <ebotcazou@adacore.com>
+
+	* exp_ch6.adb (Expand_Simple_Function_Return): Use a constant return
+	object when the simple return is rewritten as an extended one.
+	* libgnat/s-secsta.adb (SS_Allocate): Raise Storage_Error if the
+	requested size is negative.
+	* libgnat/s-secsta__cheri.adb (SS_Allocate): Likewise.
+
+2026-04-03  Tonu Naks  <naks@adacore.com>
+
+	* doc/gnat_rm/gnat_language_extensions.rst: Adjust rules for
+	structural generic instantiations.
+	* gnat_rm.texi: Regenerate.
+
+2026-03-31  Eric Botcazou  <ebotcazou@adacore.com>
+
+	* sem_attr.adb (Analyze_Attribute) <Attribute_Reduce>: Rewrite the
+	analysis of a non-overloaded reducer.  Moreover, when both actuals
+	are overloaded, compute the set of possible interpretations.
+	(Resolve_Attribute) <Attribute_Reduce>: Streamline the processing.
+
+2026-03-27  Eric Botcazou  <ebotcazou@adacore.com>
+
+	* sem_ch12.adb (Analyze_Structural_Associations): Create a local
+	instance instead of a structural instance when a local entity of
+	a library-level package is used in a subprogram instantiation.
+
+2026-03-27  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124596
+	* sem_ch12.ads (Check_Private_View): Move around.
+	* sem_ch12.adb (Check_Private_View): Retrieve the partial view
+	by means of a call to Incomplete_Or_Partial_View.
+	(Save_Global_References.Set_Global_Type): Do not force the full
+	view of a type when only the partial declaration is visible.
+	* sem_res.adb (Resolve_Actuals.Insert_Default): Remove obsolete
+	code coping with the above kludge.
+
+2026-03-23  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124607
+	* sem_elab.adb (Has_Body.Find_Body): Fix thinko.
+
+2026-03-23  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124606
+	* sem_ch12.adb (Find_Actual_Type): Rename formal parameter.
+	(Map_Formal_Package_Entities): Do not register base types.
+
+2026-03-20  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/120669
+	* sem_ch4.adb (Analyze_Explicit_Dereference): Remove interpretations
+	of the prefix only if they are of access types.
+	(Analyze_One_Call.Indicate_Name_And_Type): Check for an implicit
+	dereference only after indicating the name and type of the call.
+	* sem_ch5.adb (Analyze_Assignment): Do not remove interpretations
+	for the LHS if they are for a type with implicit dereference.
+	* sem_res.adb (Resolve): Streamline the processing of overloaded
+	nodes once an interpretation is picked for them.  Add a specific
+	handling for additional interpretations for generalized references.
+	(Resolve_Explicit_Dereference): Remove interpretations of the prefix
+	only if they are of access types.
+	(Is_Ambiguous_Operand): Skip the direct interpretation for a limited
+	type that has implicit dereference.
+	* sem_type.adb (Add_One_Interp): Set the name of the first entry of
+	the table of interpretations in more cases.
+
+2026-03-14  Matthias Klose  <doko@gcc.gnu.org>
+
+	PR ada/107475
+	* Makefile.rtl (s390% linux%): Define MISCLIB.
+	(arm% linux-gnueabi%): Likewise.
+	(%x32 linux%): Likewise.
+
+2026-03-12  Steve Baird  <baird@adacore.com>
+
+	PR ada/124016
+	* libgnat/a-cbinho.adb (Create_Subpool): Handle the case where
+	the type Holder_Subpool has nontrivial finalization. Declare the
+	local variable Subpool with its Import aspect specified (to avoid
+	unwanted finalization), and make corresponding changes in order to
+	initialize that variable.
+	* libgnat/s-stposu.ads (_Adjust_Clone): New procedure.
+	* libgnat/s-stposu.adb (_Adjust_Clone): New body.
+
+2026-03-12  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124369
+	* accessibility.adb (Accessibility_Message): Give an error instead
+	of a warning in an instance when No_Dynamic_Accessibility_Checks is
+	in effect.
+	(Innermost_Master_Scope_Depth): Restore the original computation of
+	the nearest enclosing dynamic scope.
+	* sem_attr.adb (Resolve_Attribute) <Attribute_Access>: Call the
+	Accessibility_Message routine in all cases to give accessibility
+	errors and do not return.  Call the Static_Accessibility_Level
+	function in all cases to compute static accessibility levels.
+	Add guard before calling Prefix_With_Safe_Accessibility_Level.
+
+2026-03-12  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124376
+	* sem_res.adb (Resolve_Actuals.Check_Aliased_Parameter): Deal with
+	assignment statements.
+
+2026-03-12  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124376
+	* accessibility.adb (Accessibility_Level): Minor formatting tweaks.
+	(Accessibility_Level.Function_Call_Or_Allocator_Level): Implement
+	AI12-0402.  Reimplement the loop climbing up the parent chain to
+	find an object being initialized.  Restrict the specific handling
+	of N_Assignment_Statement nodes to the anonymous access type case.
+	* doc/gnat_rm/implementation_of_ada_2022_features.rst: Adjust the
+	entries of AI12-0277, AI12-0345 & AI12-0372, add one for AI12-0402.
+	* gnat_rm.texi: Regenerate.
+
+2026-03-07  Eric Botcazou  <ebotcazou@gcc.gnu.org>
+
+	PR target/124336
+	* init.c (__gnat_adjust_context_for_raise) [x86/Linux]: Fix typo.
+
+2026-03-07  Eric Botcazou  <ebotcazou@gcc.gnu.org>
+
+	PR target/124336
+	* init.c (__gnat_adjust_context_for_raise) [x86/Linux]: Adjust
+	pattern matching to new stack probes.
+
+2026-02-28  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124285
+	* gcc-interface/decl.cc (components_to_record): Force a packed
+	layout for the innermost variant of an unchecked union type with
+	fixed part and full representation clause.
+
+2026-02-27  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124201
+	PR ada/124282
+	* exp_aggr.adb (Expand_Iterated_Component): Replace the iteration
+	variable in the expression as well.
+	* sem_aggr.adb (Resolve_Iterated_Component_Association): Preanalyze
+	the expression directly as well.
+
+2026-02-27  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/123306
+	* freeze.adb (Freeze_Entity): For a class-wide equivalent type of
+	a non-interface root type, freeze the root type before it.
+	* sem_ch3.adb (Derived_Type_Declaration): Minor tweak.
+	* sem_ch12.adb (Analyze_One_Association): Revert latest change.
+	* sem_ch13.adb (Analyze_Attribute_Definition_Clause) <Size>: When
+	the prefix is a class-wide type, insert the declaration of the CW-
+	equivalent type immediately after that of the root type, and the
+	size check for the root type into its own freezing actions.
+
+2026-02-26  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124201
+	* exp_aggr.adb (Expand_Iterated_Component): Replace the iteration
+	variable in the key expression and iterator filter, if any.
+	* sem_aggr.adb (Resolve_Iterated_Component_Association): Preanalyze
+	the specification and key expression directly.
+
+2026-02-25  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124226
+	* sem_res.adb (Resolve_Implicit_Dereference): Move declaration to...
+	* sem_res.ads (Resolve_Implicit_Dereference): ...here.
+	* sem_attr.adb (Resolve_Attribute) <Attribute_Access>: Also call
+	Resolve_Implicit_Dereference when resolving a protected operation.
+
+2026-02-24  Eric Botcazou  <ebotcazou@adacore.com>
+	    Liam Powell  <liam@liampwll.com>
+
+	PR ada/124224
+	* sem_aggr.adb (Resolve_Container_Aggregate): Minor tweaks.
+	(Resolve_Iterated_Association): Compute Typ on all paths.
+
+2026-02-22  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124192
+	* doc/gnat_rm/standard_and_implementation_defined_restrictions.rst
+	(Max_Tasks): Adjust description.
+	* gnat_rm.texi: Regenerate.
+
+2026-02-22  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124179
+	* sem_ch9.adb (Analyze_Triggering_Alternative): Use more robust
+	test for delay and entry call statements and fix thinko in test
+	for procedure call statements.
+
+2026-02-20  Eric Botcazou  <ebotcazou@adacore.com>
+
+	* libgnat/s-stposu.adb (Finalize_Pool): Pass a local copy of the
+	handle in the call to Finalize_And_Deallocate.
+
+2026-02-16  Eric Botcazou  <ebotcazou@adacore.com>
+
+	PR ada/124106
+	* exp_ch4.adb (Expand_N_Allocator): Minor fix in commentary.
+	(Expand_Allocator_Expression): Propagate the Subpool_Handle_Name
+	of the original allocator onto the newly built allocators.
+	* exp_ch6.adb (Make_Build_In_Place_Call_In_Allocator): Likewise.
+	Use Preserve_Comes_From_Source to propagate Comes_From_Source.
+	(Make_CPP_Constructor_Call_In_Allocator): Likewise.
+
 2026-02-11  Steve Baird  <baird@adacore.com>
 
 	PR ada/124016

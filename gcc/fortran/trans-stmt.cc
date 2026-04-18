@@ -1362,7 +1362,8 @@ gfc_trans_sync (gfc_code *code, gfc_exec_op type)
     {
       gfc_init_se (&argse, NULL);
       gfc_conv_expr_val (&argse, code->expr1);
-      images = argse.expr;
+      images = gfc_trans_force_lval (&argse.pre, argse.expr);
+      gfc_add_block_to_block (&se.pre, &argse.pre);
     }
 
   if (code->expr2)
@@ -1372,6 +1373,7 @@ gfc_trans_sync (gfc_code *code, gfc_exec_op type)
       gfc_init_se (&argse, NULL);
       gfc_conv_expr_val (&argse, code->expr2);
       stat = argse.expr;
+      gfc_add_block_to_block (&se.pre, &argse.pre);
     }
   else
     stat = null_pointer_node;
@@ -1384,8 +1386,9 @@ gfc_trans_sync (gfc_code *code, gfc_exec_op type)
       argse.want_pointer = 1;
       gfc_conv_expr (&argse, code->expr3);
       gfc_conv_string_parameter (&argse);
-      errmsg = gfc_build_addr_expr (NULL, argse.expr);
+      errmsg = argse.expr;
       errmsglen = fold_convert (size_type_node, argse.string_length);
+      gfc_add_block_to_block (&se.pre, &argse.pre);
     }
   else if (flag_coarray == GFC_FCOARRAY_LIB)
     {
@@ -6920,6 +6923,7 @@ gfc_trans_allocate (gfc_code * code, gfc_omp_namelist *omp_allocate)
 	  && (code->expr3->ts.u.derived->attr.alloc_comp
 	      || code->expr3->ts.u.derived->attr.pdt_type)
 	  && !code->expr3->must_finalize
+	  && !gfc_expr_attr (code->expr3).pointer
 	  && !code->ext.alloc.expr3_not_explicit)
 	{
 	  tmp = gfc_deallocate_alloc_comp (code->expr3->ts.u.derived,
@@ -7083,11 +7087,16 @@ gfc_trans_allocate (gfc_code * code, gfc_omp_namelist *omp_allocate)
 	  /* Build a temporary symtree and symbol.  Do not add it to the current
 	     namespace to prevent accidentaly modifying a colliding
 	     symbol's as.  */
-	  newsym = XCNEW (gfc_symtree);
 	  /* The name of the symtree should be unique, because gfc_create_var ()
 	     took care about generating the identifier.  */
-	  newsym->name
-	    = gfc_get_string ("%s", IDENTIFIER_POINTER (DECL_NAME (expr3)));
+	  if (DECL_NAME (expr3) && IDENTIFIER_POINTER (DECL_NAME (expr3)))
+	    {
+	      const char *name = IDENTIFIER_POINTER (DECL_NAME (expr3));
+	      newsym = XCNEW (gfc_symtree);
+	      newsym->name = gfc_get_string ("%s", name);
+	    }
+	  else
+	    newsym = gfc_get_unique_symtree (NULL);
 	  newsym->n.sym = gfc_new_symbol (newsym->name, NULL);
 	  /* The backend_decl is known.  It is expr3, which is inserted
 	     here.  */

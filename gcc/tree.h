@@ -1939,6 +1939,16 @@ class auto_suppress_location_wrappers
 #define OMP_CLAUSE_MAP_READONLY(NODE) \
   TREE_READONLY (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_MAP))
 
+/* Nonzero if the size (or bias) is not known by the front end and needs to be
+   adjusted in the middle end.  */
+#define OMP_CLAUSE_MAP_SIZE_NEEDS_ADJUSTMENT(NODE) \
+  TREE_CONSTANT (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_MAP))
+
+/* Nonzero on a map clause that is only used internally by the gimplifier and
+   can thus be removed at the end of the GIMPLE pass.  */
+#define OMP_CLAUSE_MAP_GIMPLE_ONLY(NODE) \
+  TREE_USED (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE_MAP))
+
 /* Same as above, for use in OpenACC cache directives.  */
 #define OMP_CLAUSE__CACHE__READONLY(NODE) \
   TREE_READONLY (OMP_CLAUSE_SUBCODE_CHECK (NODE, OMP_CLAUSE__CACHE_))
@@ -5990,6 +6000,9 @@ extern int get_range_pos_neg (tree, gimple * = NULL);
 
 /* Return true for a valid pair of new and delete operators.  */
 extern bool valid_new_delete_pair_p (tree, tree, bool * = NULL);
+
+/* Return whether the second argument is a subtree of the first one.  */
+extern bool find_tree (tree, tree);
 
 /* Return simplified tree code of type that is used for canonical type
    merging.  */

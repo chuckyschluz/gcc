@@ -1,3 +1,25 @@
+2026-04-09  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* Make-lang.in (create_fdas_for_lto1): Use $(AFDO_PROFILER) when passing
+	--profiler to create_gcov. Ensure that perf.data contains profile for
+	lto1. Make the console output more useful.
+
+2026-03-26  Michal Jires  <mjires@suse.cz>
+
+	* lto-partition.cc (enum map1to1_content): New.
+	(map_1_to_1): Use map1to1_content.
+	(lto_1_to_1_map): Likewise.
+	(create_asm_partitions): Likewise.
+	(lto_max_map): Likewise.
+	(lto_cache_map): Use create_asm_partitions.
+
+2026-03-18  Dhruv Chawla  <dhruvc@nvidia.com>
+
+	* Make-lang.in (lto1.fda): Add `--print-autofdo-gcov-version` to
+	profile_merger invocation.
+	(create_fdas_for_lto1): Add `--print-autofdo-gcov-version` to
+	create_gcov invocations.
+
 2026-02-13  Dhruv Chawla  <dhruvc@nvidia.com>
 
 	* Make-lang.in (lto1.fda): Likewise.

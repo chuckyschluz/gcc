@@ -1868,7 +1868,7 @@ gfc_check_image_status (gfc_expr *image, gfc_expr *team)
       || !positive_check (0, image))
     return false;
 
-  return !team || (scalar_check (team, 0) && team_type_check (team, 0));
+  return !team || (scalar_check (team, 1) && team_type_check (team, 1));
 }
 
 
@@ -1911,13 +1911,8 @@ gfc_check_f_c_string (gfc_expr *string, gfc_expr *asis)
 bool
 gfc_check_failed_or_stopped_images (gfc_expr *team, gfc_expr *kind)
 {
-  if (team)
-    {
-      gfc_error ("%qs argument of %qs intrinsic at %L not yet supported",
-		 gfc_current_intrinsic_arg[0]->name, gfc_current_intrinsic,
-		 &team->where);
-      return false;
-    }
+  if (team && (!scalar_check (team, 0) || !team_type_check (team, 0)))
+    return false;
 
   if (kind)
     {
@@ -4087,7 +4082,7 @@ min_max_args (gfc_actual_arglist *args)
   /* Note: Having a keywordless argument after an "arg=" is checked before.  */
   nlabelless = 0;
   nlabels = XALLOCAVEC (int, nargs);
-  for (arg = args, i = 0; arg; arg = arg->next, i++)
+  for (arg = args, i = 0; arg; arg = arg->next)
     if (arg->name)
       {
 	int n;
@@ -4103,6 +4098,7 @@ min_max_args (gfc_actual_arglist *args)
 	if (n <= nlabelless)
 	  goto duplicate;
 	nlabels[i] = n;
+	i++;
 	if (n == 1)
 	  a1 = true;
 	if (n == 2)

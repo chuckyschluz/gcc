@@ -569,6 +569,9 @@ builtin_valid_in_constant_expr_p (const_tree decl)
 	  case CP_BUILT_IN_IS_POINTER_INTERCONVERTIBLE_WITH_CLASS:
 	  case CP_BUILT_IN_EH_PTR_ADJUST_REF:
 	  case CP_BUILT_IN_IS_STRING_LITERAL:
+	  case CP_BUILT_IN_CONSTEXPR_DIAG:
+	  case CP_BUILT_IN_CURRENT_EXCEPTION:
+	  case CP_BUILT_IN_UNCAUGHT_EXCEPTIONS:
 	    return true;
 	  default:
 	    break;
@@ -2151,6 +2154,11 @@ strip_typedefs_expr (tree t, bool *remove_attributes, unsigned int flags)
     case LAMBDA_EXPR:
     case STMT_EXPR:
       return t;
+
+    case REFLECT_EXPR:
+      /* ^^alias represents the alias itself, not the underlying type.  */
+      if (TYPE_P (REFLECT_EXPR_HANDLE (t)))
+	return t;
 
     default:
       break;
@@ -4507,10 +4515,20 @@ cp_tree_equal (tree t1, tree t2)
       return true;
 
     case REFLECT_EXPR:
-      if (!cp_tree_equal (REFLECT_EXPR_HANDLE (t1), REFLECT_EXPR_HANDLE (t2))
-	  || REFLECT_EXPR_KIND (t1) != REFLECT_EXPR_KIND (t2))
-	return false;
-      return true;
+      {
+	if (REFLECT_EXPR_KIND (t1) != REFLECT_EXPR_KIND (t2))
+	  return false;
+	tree h1 = REFLECT_EXPR_HANDLE (t1);
+	tree h2 = REFLECT_EXPR_HANDLE (t2);
+	if (!cp_tree_equal (h1, h2))
+	  return false;
+	/* ^^alias represents the alias itself, not the underlying type.  */
+	if (TYPE_P (h1)
+	    && (typedef_variant_p (h1) || typedef_variant_p (h2))
+	    && TYPE_NAME (h1) != TYPE_NAME (h2))
+	  return false;
+	return true;
+      }
 
     default:
       break;
@@ -5911,31 +5929,43 @@ handle_annotation_attribute (tree *node, tree ARG_UNUSED (name),
       *no_add_attrs = true;
       return NULL_TREE;
     }
-  if (!type_dependent_expression_p (TREE_VALUE (args)))
+  if (TREE_CODE (*node) == PARM_DECL && VOID_TYPE_P (TREE_TYPE (*node)))
     {
-      if (!structural_type_p (TREE_TYPE (TREE_VALUE (args))))
+      error ("annotation on void parameter");
+      *no_add_attrs = true;
+      return NULL_TREE;
+    }
+
+  /* Annotations are treated as late attributes so we shouldn't see
+     anything type-dependent now.  */
+  gcc_assert (!type_dependent_expression_p (TREE_VALUE (args)));
+  /* FIXME We should be using convert_reflect_constant_arg here to
+     implement std::meta::reflect_constant(constant-expression)
+     properly, but that introduces new crashes.  */
+  TREE_VALUE (args) = decay_conversion (TREE_VALUE (args), tf_warning_or_error);
+
+  if (!structural_type_p (TREE_TYPE (TREE_VALUE (args))))
+    {
+      auto_diagnostic_group d;
+      error ("annotation does not have structural type");
+      structural_type_p (TREE_TYPE (TREE_VALUE (args)), true);
+      *no_add_attrs = true;
+      return NULL_TREE;
+    }
+  if (CLASS_TYPE_P (TREE_TYPE (TREE_VALUE (args))))
+    {
+      tree arg = make_tree_vec (1);
+      tree type = TREE_TYPE (TREE_VALUE (args));
+      TREE_VEC_ELT (arg, 0)
+	= build_stub_type (type, cp_type_quals (type) | TYPE_QUAL_CONST,
+			   /*rvalue=*/false);
+      if (!is_xible (INIT_EXPR, type, arg))
 	{
 	  auto_diagnostic_group d;
-	  error ("annotation does not have structural type");
-	  structural_type_p (TREE_TYPE (TREE_VALUE (args)), true);
+	  error ("annotation does not have copy constructible type");
+	  is_xible (INIT_EXPR, type, arg, /*explain=*/true);
 	  *no_add_attrs = true;
 	  return NULL_TREE;
-	}
-      if (CLASS_TYPE_P (TREE_TYPE (TREE_VALUE (args))))
-	{
-	  tree arg = make_tree_vec (1);
-	  tree type = TREE_TYPE (TREE_VALUE (args));
-	  TREE_VEC_ELT (arg, 0)
-	    = build_stub_type (type, cp_type_quals (type) | TYPE_QUAL_CONST,
-			       /*rvalue=*/false);
-	  if (!is_xible (INIT_EXPR, type, arg))
-	    {
-	      auto_diagnostic_group d;
-	      error ("annotation does not have copy constructible type");
-	      is_xible (INIT_EXPR, type, arg, /*explain=*/true);
-	      *no_add_attrs = true;
-	      return NULL_TREE;
-	    }
 	}
     }
   if (!processing_template_decl)

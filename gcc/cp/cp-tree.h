@@ -522,6 +522,7 @@ extern GTY(()) tree cp_global_trees[CPTI_MAX];
       TARGET_EXPR_ELIDING_P (in TARGET_EXPR)
       IF_STMT_VACUOUS_INIT_P (IF_STMT)
       TYPENAME_IS_RESOLVING_P (in TYPENAME_TYPE)
+      SPLICE_EXPR_TEMPLATE_P (in SPLICE_EXPR)
    4: IDENTIFIER_MARKED (IDENTIFIER_NODEs)
       TREE_HAS_CONSTRUCTOR (in INDIRECT_REF, SAVE_EXPR, CONSTRUCTOR,
 	  CALL_EXPR, or FIELD_DECL).
@@ -532,6 +533,8 @@ extern GTY(()) tree cp_global_trees[CPTI_MAX];
       FNDECL_MANIFESTLY_CONST_EVALUATED (in FUNCTION_DECL)
       TARGET_EXPR_INTERNAL_P (in TARGET_EXPR)
       CONTRACT_CONST (in ASSERTION_, PRECONDITION_, POSTCONDITION_STMT)
+      DECL_HAS_DEFAULT_ARGUMENT_P (in PARM_DECL)
+      SPLICE_EXPR_TARGS_P (in SPLICE_EXPR)
    5: IDENTIFIER_VIRTUAL_P (in IDENTIFIER_NODE)
       FUNCTION_RVALUE_QUALIFIED (in FUNCTION_TYPE, METHOD_TYPE)
       CALL_EXPR_REVERSE_ARGS (in CALL_EXPR, AGGR_INIT_EXPR)
@@ -590,7 +593,9 @@ extern GTY(()) tree cp_global_trees[CPTI_MAX];
    7: DECL_THUNK_P (in a member FUNCTION_DECL)
       DECL_NORMAL_CAPTURE_P (in FIELD_DECL)
       DECL_DECLARED_CONSTINIT_P (in VAR_DECL)
+      TYPE_DECL_FOR_LINKAGE_PURPOSES_P (in TYPE_DECL)
    8: DECL_DECLARED_CONSTEXPR_P (in VAR_DECL, FUNCTION_DECL)
+      DECL_CONTRACT_CAPTURE_P (in FIELD_DECL)
 
    Usage of language-independent fields in a language-dependent manner:
 
@@ -1976,6 +1981,24 @@ enum reflect_kind : addr_space_t {
 #define SET_SPLICE_EXPR_ADDRESS_P(NODE, VAL) \
   (SPLICE_EXPR_ADDRESS_P (TREE_CODE (NODE) == SPLICE_EXPR \
 			  ? NODE : TREE_OPERAND (NODE, 0)) = (VAL))
+
+/* True if this SPLICE_EXPR was decorated with 'template'.  */
+#define SPLICE_EXPR_TEMPLATE_P(NODE) \
+   TREE_LANG_FLAG_3 (SPLICE_EXPR_CHECK (NODE))
+
+/* Helper macro to set SPLICE_EXPR_TEMPLATE_P.  */
+#define SET_SPLICE_EXPR_TEMPLATE_P(NODE, VAL) \
+  (SPLICE_EXPR_TEMPLATE_P (TREE_CODE (NODE) == SPLICE_EXPR \
+			   ? NODE : TREE_OPERAND (NODE, 0)) = (VAL))
+
+/* True if this SPLICE_EXPR has template arguments.  */
+#define SPLICE_EXPR_TARGS_P(NODE) \
+   TREE_LANG_FLAG_4 (SPLICE_EXPR_CHECK (NODE))
+
+/* Helper macro to set SPLICE_EXPR_TARGS_P.  */
+#define SET_SPLICE_EXPR_TARGS_P(NODE, VAL) \
+  (SPLICE_EXPR_TARGS_P (TREE_CODE (NODE) == SPLICE_EXPR \
+			? NODE : TREE_OPERAND (NODE, 0)) = (VAL))
 
 /* The expression in question for a SPLICE_SCOPE.  */
 #define SPLICE_SCOPE_EXPR(NODE) \
@@ -3999,6 +4022,20 @@ struct GTY(()) lang_decl {
    && TREE_CODE (TYPE_NAME (NODE)) == TYPE_DECL	\
    && TYPE_DECL_ALIAS_P (TYPE_NAME (NODE)))
 
+/* Nonzero for typedef name for linkage purposes.  For -freflection
+   set also on the originally unnamed TYPE_DECL.  */
+#define TYPE_DECL_FOR_LINKAGE_PURPOSES_P(NODE) \
+  DECL_LANG_FLAG_7 (TYPE_DECL_CHECK (NODE))
+
+/* Nonzero for TYPE_DECL originally with IDENTIFIER_ANON_P DECL_NAME
+   later on named by a typedef name for linkage purposes in the
+   -freflection case (otherwise the TYPE_DECL keeps IDENTIFIER_ANON_P
+   DECL_NAME).  */
+#define TYPE_DECL_WAS_UNNAMED(NODE) \
+  (TREE_CODE (NODE) == TYPE_DECL \
+   && TYPE_DECL_FOR_LINKAGE_PURPOSES_P (NODE) \
+   && DECL_IMPLICIT_TYPEDEF_P (NODE))
+
 /* If non-NULL for a VAR_DECL, FUNCTION_DECL, TYPE_DECL, TEMPLATE_DECL,
    or CONCEPT_DECL, the entity is either a template specialization (if
    DECL_USE_TEMPLATE is nonzero) or the abstract instance of the
@@ -5329,6 +5366,12 @@ get_vec_init_expr (tree t)
 #define MULTIPLE_NAMES_PARM_P(NODE) \
   TREE_LANG_FLAG_2 (PARM_DECL_CHECK (NODE))
 
+/* Nonzero for PARM_DECL node means that at least one block scope extern
+   for the corresponding FUNCTION_DECL provided default argument for this
+   parameter.  */
+#define DECL_HAS_DEFAULT_ARGUMENT_P(NODE) \
+  TREE_LANG_FLAG_4 (PARM_DECL_CHECK (NODE))
+
 /* Nonzero for a FIELD_DECL who's NSMDI is currently being
    instantiated.  */
 #define DECL_INSTANTIATING_NSDMI_P(NODE) \
@@ -5344,6 +5387,13 @@ get_vec_init_expr (tree t)
    name lookup in unevaluated contexts.  */
 #define DECL_NORMAL_CAPTURE_P(NODE) \
   DECL_LANG_FLAG_7 (FIELD_DECL_CHECK (NODE))
+
+/* True when a field decl relates to a lambda capture that has currently been
+   made to satisfy a use within a contract check.  Reset to false when the
+   capture is required outside a contract check.  Used to diagnose cases where
+   a capture is only made within contract checks.  */
+#define DECL_CONTRACT_CAPTURE_P(NODE) \
+  DECL_LANG_FLAG_8 (FIELD_DECL_CHECK (NODE))
 
 /* Nonzero if TYPE is an anonymous union or struct type.  We have to use a
    flag for this because "A union for which objects or pointers are
@@ -5365,10 +5415,13 @@ get_vec_init_expr (tree t)
 
 /* True if TYPE is an unnamed structured type with a typedef for
    linkage purposes.  In that case TYPE_NAME and TYPE_STUB_DECL of the
-   MAIN-VARIANT are different.  */
+   MAIN-VARIANT are different or TYPE_DECL_WAS_UNNAMED
+   is true for the TYPE_NAME.  */
 #define TYPE_WAS_UNNAMED(NODE)				\
   (TYPE_NAME (TYPE_MAIN_VARIANT (NODE))			\
-   != TYPE_STUB_DECL (TYPE_MAIN_VARIANT (NODE)))
+   != TYPE_STUB_DECL (TYPE_MAIN_VARIANT (NODE))		\
+   || TYPE_DECL_WAS_UNNAMED		\
+	(TYPE_NAME (TYPE_MAIN_VARIANT (NODE))))
 
 /* C++: all of these are overloaded!  These apply only to TYPE_DECLs.  */
 
@@ -6107,20 +6160,24 @@ enum tsubst_flags {
 				    for calls in decltype (5.2.2/11).  */
   tf_partial = 1 << 8,		 /* Doing initial explicit argument
 				    substitution in fn_type_unification.  */
-  tf_fndecl_type = 1 << 9,   /* Substituting the type of a function
-				declaration.  */
-  tf_no_cleanup = 1 << 10,   /* Do not build a cleanup
-				(build_target_expr and friends) */
-  /* 1 << 11 is available.  */
+  tf_fndecl_type = 1 << 9,	 /* Substituting the type of a function
+				    declaration.  */
+  tf_no_cleanup = 1 << 10,	 /* Do not build a cleanup
+				    (build_target_expr and friends) */
+  tf_any_viable = 1 << 11,	 /* Return void_node if there are any viable
+				    candidates.  Currently only supported on
+				    finish_call_expr on perform_koenig_lookup
+				    result.  */
   tf_tst_ok = 1 << 12,		 /* Allow a typename-specifier to name
 				    a template (C++17 or later).  */
-  tf_dguide = 1 << 13,		/* Building a deduction guide from a ctor.  */
+  tf_dguide = 1 << 13,		 /* Building a deduction guide from a ctor.  */
   tf_qualifying_scope = 1 << 14, /* Substituting the LHS of the :: operator.
 				    Affects TYPENAME_TYPE resolution from
 				    make_typename_type.  */
-  tf_no_name_lookup = 1 << 15, /* Don't look up the terminal name of an
-				  outermost id-expression, or resolve its
-				  constituent template-ids or qualified-ids.  */
+  tf_no_name_lookup = 1 << 15,	 /* Don't look up the terminal name of an
+				    outermost id-expression, or resolve its
+				    constituent template-ids or
+				    qualified-ids.  */
   /* Convenient substitution flags combinations.  */
   tf_warning_or_error = tf_warning | tf_error
 };
@@ -7105,6 +7162,9 @@ enum cp_built_in_function {
   CP_BUILT_IN_SOURCE_LOCATION,
   CP_BUILT_IN_EH_PTR_ADJUST_REF,
   CP_BUILT_IN_IS_STRING_LITERAL,
+  CP_BUILT_IN_CONSTEXPR_DIAG,
+  CP_BUILT_IN_CURRENT_EXCEPTION,
+  CP_BUILT_IN_UNCAUGHT_EXCEPTIONS,
   CP_BUILT_IN_LAST
 };
 
@@ -7849,7 +7909,7 @@ extern bool deduce_inheriting_ctor		(tree);
 extern bool decl_remember_implicit_trigger_p	(tree);
 extern void synthesize_method			(tree);
 extern void maybe_synthesize_method		(tree);
-extern tree lazily_declare_fn			(special_function_kind,
+extern void lazily_declare_fn			(special_function_kind,
 						 tree);
 extern tree skip_artificial_parms_for		(const_tree, tree);
 extern int num_artificial_parms_for		(const_tree);
@@ -7967,6 +8027,7 @@ extern void mangle_module (int m, bool include_partition);
 extern void mangle_module_fini ();
 extern void lazy_load_binding (unsigned mod, tree ns, tree id,
 			       binding_slot *bslot);
+extern void lazy_load_pendings (tree ns, tree name);
 extern void lazy_load_pendings (tree decl);
 extern module_state *preprocess_module (module_state *, location_t,
 					bool in_purview,
@@ -7995,10 +8056,10 @@ extern tree clone_attrs				(tree);
 extern bool maybe_clone_body			(tree);
 
 /* In parser.cc */
-extern tree cp_build_range_for_decls (location_t, tree, tree *, bool);
+extern tree cp_build_range_for_decls (location_t, tree, tree *, tree);
 extern tree cp_convert_range_for (tree, tree, tree, cp_decomp *, bool,
 				  tree, bool);
-extern tree build_range_temp (tree, bool = false);
+extern tree build_range_temp (tree, tree = NULL_TREE);
 extern tree cp_perform_range_for_lookup	(tree, tree *, tree *,
 					 tsubst_flags_t = tf_warning_or_error);
 extern void cp_convert_omp_range_for (tree &, tree &, tree &,
@@ -9383,12 +9444,16 @@ extern bool consteval_only_p (tree) ATTRIBUTE_PURE;
 extern bool compare_reflections (tree, tree) ATTRIBUTE_PURE;
 extern bool valid_splice_type_p (const_tree) ATTRIBUTE_PURE;
 extern bool valid_splice_scope_p (const_tree) ATTRIBUTE_PURE;
-extern bool check_splice_expr (location_t, location_t, tree, bool, bool, bool)
+extern bool valid_splice_for_member_access_p (const_tree, bool = true)
   ATTRIBUTE_PURE;
+extern bool check_splice_expr (location_t, location_t, tree, bool, bool, bool,
+			       bool, bool) ATTRIBUTE_PURE;
 extern tree make_splice_scope (tree, bool);
 extern bool dependent_splice_p (const_tree) ATTRIBUTE_PURE;
 extern tree reflection_mangle_prefix (tree, char [3]);
 extern void check_consteval_only_fn (tree);
+extern bool reflection_function_template_p (const_tree) ATTRIBUTE_PURE;
+extern void dump_data_member_spec (pretty_printer *, tree);
 
 /* Inline bodies.  */
 
@@ -9503,8 +9568,8 @@ is_constrained_auto (const_tree t)
 }
 
 /* True if CODE, a tree code, denotes a tree whose operand is not evaluated
-   as per [expr.context], i.e., an operand to sizeof, typeof, decltype, or
-   alignof.  */
+   as per [expr.context], i.e., an operand to sizeof, typeof, decltype,
+   alignof, or the id-expression of a reflect-expression.  */
 
 inline bool
 unevaluated_p (tree_code code)
@@ -9513,7 +9578,8 @@ unevaluated_p (tree_code code)
 	  || code == ALIGNOF_EXPR
 	  || code == SIZEOF_EXPR
 	  || code == NOEXCEPT_EXPR
-	  || code == REQUIRES_EXPR);
+	  || code == REQUIRES_EXPR
+	  || code == REFLECT_EXPR);
 }
 
 /* RAII class to push/pop the access scope for T.  */
@@ -9542,12 +9608,15 @@ struct push_access_scope_guard
 class cexpr_str
 {
 public:
+  cexpr_str () : message (NULL_TREE) {}
   cexpr_str (tree message) : message (message) {}
   cexpr_str (const cexpr_str &) = delete;
   ~cexpr_str () { XDELETEVEC (buf); }
 
-  bool type_check (location_t location);
-  bool extract (location_t location, const char * & msg, int &len);
+  bool type_check (location_t location, bool allow_char8_t = false);
+  bool extract (location_t location, const char * &msg, int &len,
+		const constexpr_ctx * = NULL,  bool * = NULL,
+		bool * = NULL, tree * = NULL);
   bool extract (location_t location, tree &str);
   tree message;
 private:

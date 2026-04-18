@@ -24,6 +24,7 @@ along with GCC; see the file COPYING3.  If not see
 #include "coretypes.h"
 #include "options.h"
 #include "gfortran.h"
+#include "diagnostic-core.h"
 #include "parse.h"
 #include "match.h"
 #include "constructor.h"
@@ -564,6 +565,7 @@ gfc_check_conflict (symbol_attribute *attr, const char *name, locus *where)
   conf (pointer, elemental);
   conf (pointer, codimension);
   conf (allocatable, elemental);
+  conf (threadprivate, omp_groupprivate);
 
   conf (in_common, automatic);
   conf (result, automatic);
@@ -1886,19 +1888,18 @@ gfc_add_procedure (symbol_attribute *attr, procedure_type t,
   if (attr->proc != PROC_UNKNOWN && !attr->module_procedure
       && attr->access == ACCESS_UNKNOWN)
     {
-      if (attr->proc == PROC_ST_FUNCTION && t == PROC_INTERNAL
-	  && !gfc_notification_std (GFC_STD_F2008))
-	gfc_error ("%s procedure at %L is already declared as %s "
-		   "procedure. \nF2008: A pointer function assignment "
-		   "is ambiguous if it is the first executable statement "
-		   "after the specification block. Please add any other "
-		   "kind of executable statement before it. FIXME",
+      gfc_error ("%s procedure at %L is already declared as %s procedure",
 		 gfc_code2string (procedures, t), where,
 		 gfc_code2string (procedures, attr->proc));
-      else
-	gfc_error ("%s procedure at %L is already declared as %s "
-		   "procedure", gfc_code2string (procedures, t), where,
-		   gfc_code2string (procedures, attr->proc));
+      if (attr->proc == PROC_ST_FUNCTION && t == PROC_INTERNAL
+	  && !gfc_notification_std (GFC_STD_F2008))
+	{
+	  inform (gfc_get_location (where),
+		  "F2008: A pointer function assignment is ambiguous if it is "
+		  "the first executable statement after the specification "
+		  "block.  Please add any other kind of executable "
+		  "statement before it");
+	}
 
       return false;
     }
@@ -2733,6 +2734,21 @@ gfc_find_component (gfc_symbol *sym, const char *name,
 /* Given a symbol, free all of the component structures and everything
    they point to.  */
 
+void
+gfc_free_component (gfc_component *p)
+{
+  gfc_free_array_spec (p->as);
+  gfc_free_expr (p->initializer);
+  if (p->kind_expr)
+    gfc_free_expr (p->kind_expr);
+  if (p->param_list)
+    gfc_free_actual_arglist (p->param_list);
+  free (p->tb);
+  p->tb = NULL;
+  free (p);
+}
+
+
 static void
 free_components (gfc_component *p)
 {
@@ -2741,16 +2757,7 @@ free_components (gfc_component *p)
   for (; p; p = q)
     {
       q = p->next;
-
-      gfc_free_array_spec (p->as);
-      gfc_free_expr (p->initializer);
-      if (p->kind_expr)
-	gfc_free_expr (p->kind_expr);
-      if (p->param_list)
-	gfc_free_actual_arglist (p->param_list);
-      free (p->tb);
-      p->tb = NULL;
-      free (p);
+      gfc_free_component (p);
     }
 }
 
@@ -3146,7 +3153,7 @@ gfc_new_symtree (gfc_symtree **root, const char *name)
 
 /* Delete a symbol from the tree.  Does not free the symbol itself!  */
 
-static void
+void
 gfc_delete_symtree (gfc_symtree **root, const char *name)
 {
   gfc_symtree st, *st0;
@@ -3199,7 +3206,15 @@ gfc_get_unique_symtree (gfc_namespace *ns)
   static int serial = 0;
 
   sprintf (name, "@%d", serial++);
-  return gfc_new_symtree (&ns->sym_root, name);
+  if (ns)
+    return gfc_new_symtree (&ns->sym_root, name);
+  else
+    {
+      /* Some uses need a symtree that is cleaned up locally.  */
+      gfc_symtree *st = XCNEW (gfc_symtree);
+      st->name = gfc_get_string ("%s", name);
+      return st;
+    }
 }
 
 

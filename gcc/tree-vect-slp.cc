@@ -5739,7 +5739,10 @@ vect_analyze_slp (vec_info *vinfo, unsigned max_tree_size,
 				     slp_inst_kind_store, max_tree_size, &limit,
 				     force_single_lane)
 	&& loop_vinfo)
-      return opt_result::failure_at (vect_location, "SLP build failed.\n");
+      {
+	release_scalar_stmts_to_slp_tree_map (bst_map);
+	return opt_result::failure_at (vect_location, "SLP build failed.\n");
+      }
 
   /* For loops also start SLP discovery from non-grouped stores.  */
   if (loop_vinfo)
@@ -5760,8 +5763,11 @@ vect_analyze_slp (vec_info *vinfo, unsigned max_tree_size,
 	    if (! vect_build_slp_instance (vinfo, slp_inst_kind_store,
 					   stmts, roots, remain, max_tree_size,
 					   &limit, bst_map, force_single_lane))
-	      return opt_result::failure_at (vect_location,
-					     "SLP build failed.\n");
+	      {
+		release_scalar_stmts_to_slp_tree_map (bst_map);
+		return opt_result::failure_at (vect_location,
+					       "SLP build failed.\n");
+	      }
 	  }
 
       stmt_vec_info stmt_info;
@@ -5775,8 +5781,11 @@ vect_analyze_slp (vec_info *vinfo, unsigned max_tree_size,
 	  if (! vect_build_slp_instance (vinfo, slp_inst_kind_store,
 					 stmts, roots, remain, max_tree_size,
 					 &limit, bst_map, force_single_lane))
-	    return opt_result::failure_at (vect_location,
-					   "SLP build failed.\n");
+	    {
+	      release_scalar_stmts_to_slp_tree_map (bst_map);
+	      return opt_result::failure_at (vect_location,
+					     "SLP build failed.\n");
+	    }
 	}
     }
 
@@ -5807,7 +5816,10 @@ vect_analyze_slp (vec_info *vinfo, unsigned max_tree_size,
       /* Find SLP sequences starting from groups of reductions.  */
       if (!vect_analyze_slp_reductions (loop_vinfo, max_tree_size, &limit,
 					bst_map, force_single_lane))
-	return opt_result::failure_at (vect_location, "SLP build failed.\n");
+	{
+	  release_scalar_stmts_to_slp_tree_map (bst_map);
+	  return opt_result::failure_at (vect_location, "SLP build failed.\n");
+	}
 
       /* Make sure to vectorize only-live stmts, usually inductions.  */
       for (edge e : get_loop_exit_edges (LOOP_VINFO_LOOP (loop_vinfo)))
@@ -5836,8 +5848,11 @@ vect_analyze_slp (vec_info *vinfo, unsigned max_tree_size,
 					       stmts, roots, remain,
 					       max_tree_size, &limit,
 					       bst_map, force_single_lane))
-		  return opt_result::failure_at (vect_location,
-						 "SLP build failed.\n");
+		  {
+		    release_scalar_stmts_to_slp_tree_map (bst_map);
+		    return opt_result::failure_at (vect_location,
+						   "SLP build failed.\n");
+		  }
 	      }
 	  }
 
@@ -5860,6 +5875,7 @@ vect_analyze_slp (vec_info *vinfo, unsigned max_tree_size,
 	      || !integer_zerop (args1))
 	    {
 	      roots.release ();
+	      release_scalar_stmts_to_slp_tree_map (bst_map);
 	      return opt_result::failure_at (vect_location,
 					     "SLP build failed.\n");
 	    }
@@ -5881,6 +5897,7 @@ vect_analyze_slp (vec_info *vinfo, unsigned max_tree_size,
 					 bst_map, force_single_lane))
 	    {
 	      roots.release ();
+	      release_scalar_stmts_to_slp_tree_map (bst_map);
 	      return opt_result::failure_at (vect_location,
 					     "SLP build failed.\n");
 	    }
@@ -8413,11 +8430,6 @@ vect_make_slp_decision (loop_vec_info loop_vinfo)
 	 for some rational X, so they must have a common multiple.  */
       vect_update_slp_vf_for_node (root, unrolling_factor, visited);
 
-      /* Mark all the stmts that belong to INSTANCE as PURE_SLP stmts.  Later we
-	 call vect_detect_hybrid_slp () to find stmts that need hybrid SLP and
-	 loop-based vectorization.  Such stmts will be marked as HYBRID.  */
-      vect_mark_slp_stmts (loop_vinfo, root);
-
       /* If all instances ended up with vector(1) T roots make sure to
 	 not vectorize.  RVV for example relies on loop vectorization
 	 when some instances are essentially kept scalar.  See PR121048.  */
@@ -9780,8 +9792,7 @@ vect_bb_vectorization_profitable_p (bb_vec_info bb_vinfo,
       while (si < li_scalar_costs.length ()
 	     && li_scalar_costs[si].first == sl);
       scalar_target_cost_data->finish_cost (nullptr);
-      scalar_cost = (scalar_target_cost_data->body_cost ()
-		     * param_vect_scalar_cost_multiplier) / 100;
+      scalar_cost = scalar_target_cost_data->body_cost ();
 
       /* Complete the target-specific vector cost calculation.  */
       class vector_costs *vect_target_cost_data = init_cost (bb_vinfo, false);
@@ -10340,6 +10351,7 @@ vect_slp_region (vec<basic_block> bbs, vec<data_reference_p> datarefs,
 	      dump_user_location_t saved_vect_location = vect_location;
 	      vect_location = instance->location ();
 	      if (!unlimited_cost_model (NULL)
+		  && !param_vect_allow_possibly_not_worthwhile_vectorizations
 		  && !vect_bb_vectorization_profitable_p
 			(bb_vinfo, instance->subgraph_entries, orig_loop))
 		{
@@ -12069,25 +12081,38 @@ vect_schedule_slp_node (vec_info *vinfo,
 	  si = gsi_for_stmt (last_stmt);
 	  gsi_next (&si);
 
-	  /* Avoid scheduling internal defs outside of the loop when
-	     we might have only implicitly tracked loop mask/len defs.  */
 	  if (auto loop_vinfo = dyn_cast <loop_vec_info> (vinfo))
-	    if (LOOP_VINFO_FULLY_MASKED_P (loop_vinfo)
-		|| LOOP_VINFO_FULLY_WITH_LENGTH_P (loop_vinfo))
-	      {
-		gimple_stmt_iterator si2
-		  = gsi_after_labels (LOOP_VINFO_LOOP (loop_vinfo)->header);
-		if ((gsi_end_p (si2)
-		     && (LOOP_VINFO_LOOP (loop_vinfo)->header
-			 != gimple_bb (last_stmt))
-		     && dominated_by_p (CDI_DOMINATORS,
-					LOOP_VINFO_LOOP (loop_vinfo)->header,
-					gimple_bb (last_stmt)))
-		    || (!gsi_end_p (si2)
-			&& last_stmt != *si2
-			&& vect_stmt_dominates_stmt_p (last_stmt, *si2)))
-		  si = si2;
-	      }
+	    {
+	      /* Avoid scheduling stmts to random places in the CFG, any
+		 stmt dominance check we performed is possibly wrong as UIDs
+		 are not initialized for all of the function for loop
+		 vectorization.  Instead append to the loop preheader.  */
+	      if ((LOOP_VINFO_LOOP (loop_vinfo)->header
+		   != gimple_bb (last_stmt))
+		  && dominated_by_p (CDI_DOMINATORS,
+				     LOOP_VINFO_LOOP (loop_vinfo)->header,
+				     gimple_bb (last_stmt)))
+		si = gsi_end_bb (loop_preheader_edge
+				   (LOOP_VINFO_LOOP (loop_vinfo))->src);
+	      /* Avoid scheduling internal defs outside of the loop when
+		 we might have only implicitly tracked loop mask/len defs.  */
+	      if (LOOP_VINFO_FULLY_MASKED_P (loop_vinfo)
+		  || LOOP_VINFO_FULLY_WITH_LENGTH_P (loop_vinfo))
+		{
+		  gimple_stmt_iterator si2
+		    = gsi_after_labels (LOOP_VINFO_LOOP (loop_vinfo)->header);
+		  if ((gsi_end_p (si2)
+		       && (LOOP_VINFO_LOOP (loop_vinfo)->header
+			   != gimple_bb (last_stmt))
+		       && dominated_by_p (CDI_DOMINATORS,
+					  LOOP_VINFO_LOOP (loop_vinfo)->header,
+					  gimple_bb (last_stmt)))
+		      || (!gsi_end_p (si2)
+			  && last_stmt != *si2
+			  && vect_stmt_dominates_stmt_p (last_stmt, *si2)))
+		    si = si2;
+		}
+	    }
 	}
     }
 

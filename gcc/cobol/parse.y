@@ -727,7 +727,7 @@ class locale_tgt_t {
 
 %type	<field>		log_term rel_expr rel_abbr eval_abbr
 %type   <refer>		num_value num_term value factor
-%type   <refer>         simple_cond bool_expr
+%type   <refer>         simple_cond bool_expr until_expr
 %type	<log_expr_t>	log_expr rel_abbrs eval_abbrs
 %type   <rel_term_t>	rel_term rel_term1
 
@@ -1601,7 +1601,9 @@ program_id:     PROGRAM_ID dot namestr[name] program_as program_attrs[attr] dot
                   }
                   if( !current.new_program(@name, LblProgram, name,
 		                           $program_as.data,
-                                           $attr.common, $attr.initial) ) {
+                                           $attr.common,
+                                           $attr.initial,
+                                           $attr.recursive) ) {
                     auto L = symbol_program(current_program_index(), name);
                     assert(L);
                     error_msg(@name, "PROGRAM-ID %s already defined on line %d",
@@ -1636,8 +1638,10 @@ function_id:    FUNCTION NAME program_as program_attrs[attr] '.'
                     symbol_table_init();
                   }
                   if( !current.new_program(@NAME, LblFunction, $NAME,
-		                      $program_as.data,
-                                      $attr.common, $attr.initial) ) {
+                                           $program_as.data,
+                                           $attr.common,
+                                           $attr.initial,
+                                           $attr.recursive) ) {
                     auto e = symbol_function(current_program_index(), $NAME);
                     auto L = cbl_label_of(e);
                     error_msg(@NAME, "FUNCTION %s already defined on line %d",
@@ -4152,7 +4156,7 @@ data_descr1:    level_name
 
                   // Check COMP-5 capacity
 		  // No capacity means no PICTURE, valid only for a (potential) group
-                  if( $field->type == FldNumericBin5 ) {
+                  if( is_among( $field->type, {FldNumericBinary, FldNumericBin5} ) ) {
                     if( $field->data.capacity() == 0 ) {
                       if(  has_clause ($data_clauses, usage_clause_e) &&
                           !has_clause ($data_clauses, picture_clause_e) ) {
@@ -4567,11 +4571,11 @@ picture_clause: PIC signed nps[fore] nines nps[aft]
 		  }
                   assert(0 < $nchar);
                   field->data.picture = nullptr;
-                  auto nchar = std::min($nchar, MAXIMUM_ALPHA_LENGTH);
-                  if( nchar < $nchar ) {
+                  auto nchar = std::min(size_t($nchar), MAXIMUM_ALPHA_LENGTH);
+                  if( nchar < size_t($nchar) ) {
                     error_msg(@2, "alphanumeric data-item size (%d) "
-                                   "exceeds maximum of %d bytes",
-                              $nchar, MAXIMUM_ALPHA_LENGTH);
+                                   "exceeds maximum of %lu bytes",
+                              $nchar, (unsigned long)MAXIMUM_ALPHA_LENGTH);
                   }
                   field->set_initial(nchar, @nchar);
                 }
@@ -4898,7 +4902,7 @@ value_clause:   VALUE all LITERAL[lit] {
                     }
                   }
                 }
-        |       VALUE all cce_expr[cce] {
+        |       VALUE all const_value[cce] {
 		  /*
                    * cce has two parts: 
 		   * cce.r) Host binary value
@@ -4950,7 +4954,11 @@ value_clause:   VALUE all LITERAL[lit] {
                 }
         |       VALUE error
                 {
-                  error_msg(@2, "invalid VALUE");
+                  if( 0 < yychar ) {
+                    error_msg(@2, "invalid VALUE at %qs", keyword_str(yychar));
+                  } else {
+                    error_msg(@2, "invalid VALUE");
+                  }
                 }
                 ;
 
@@ -4987,21 +4995,21 @@ redefines_clause: REDEFINES NAME[orig]
                     error_msg(@2, "%s may not REDEFINE %s",
                             field->name, orig->name);
 		  }
-                  cbl_field_t *super = symbol_redefines(orig);
-                  if( super ) {
-                    error_msg(@2, "%s may not REDEFINE %s, "
-                            "which redefines %s",
-                            field->name, orig->name, super->name);
-                  }
-                  if( field->level != orig->level ) {
+                  // Resolve chained REDEFINES:
+                  //   treat "C REDEFINES B"
+                  //   with  "B REDEFINES A"
+                  // as "C" redefining the same storage as "A".
+
+                  cbl_field_t *root = symbol_redefines_root(orig);
+                  if( field->level != root->level ) {
                     error_msg(@2, "cannot redefine %s %s as %s %s "
                              "because they have different levels",
-			    orig->level_str(), name_of(orig),
+			    root->level_str(), name_of(root),
 			    field->level_str(), name_of(field));
                   }
 		  // ISO 13.18.44.3
-		  auto parent( symbol_index(e) );
-		  auto p = std::find_if( symbol_elem_of(orig) + 1,
+		  auto parent( symbol_index(symbol_elem_of(root)) );
+		  auto p = std::find_if( symbol_elem_of(root) + 1,
 					 symbol_elem_of(field),
 					 [parent, level = field->level]( const auto& elem ) {
 					   if( elem.type == SymField ) {
@@ -5016,17 +5024,17 @@ redefines_clause: REDEFINES NAME[orig]
 		    auto mid( cbl_field_of(p) );
                     error_msg(@2, "cannot redefine %s %s as %s %s "
 			    "because %s %s intervenes",
-			    orig->level_str(), name_of(orig),
+			    root->level_str(), name_of(root),
 			    field->level_str(), name_of(field),
 			    mid->level_str(), name_of(mid));
                   }
 
-                  if( valid_redefine(@2, field, orig) ) {
+                  if( valid_redefine(@2, field, root) ) {
                     /*
                      * Defer "inheriting" the parent's description until the
                      * redefine is complete.
                      */
-                    current_field()->parent = symbol_index(e);
+                    current_field()->parent = symbol_index(symbol_elem_of(root));
                   }
                 }
                 ;
@@ -5391,8 +5399,14 @@ sentence:       statements  '.'
                 }
                 ;
 
-statements:                statement { $$ = $1; }
-        |       statements statement { $$ = $2; }
+statements:     statement {
+                  $$ = $1;
+                  parser_statement_end( symbol_temporary_alphanumerics() );
+                }
+        |       statements statement {
+                  $$ = $2;
+                  parser_statement_end( symbol_temporary_alphanumerics() );
+                }
                 ;
 
 statement:      error {
@@ -6383,8 +6397,8 @@ simple_cond:    kind_of_name
                   $$ = new_reference(new_temporary(FldConditional));
                   parser_relop($$->field, lhs, eq_op, rhs);
                 }
-        |       expr NOT OMITTED
-                {
+        |       expr /* IS */ NOT OMITTED
+	        { // IS captured by lexer
                   auto lhs = cbl_refer_t($expr->field);
                   lhs.addr_of = true;
                   auto rhs = cbl_field_of(symbol_field(0,0, "NULLS"));
@@ -6421,6 +6435,13 @@ kind_of_name:   expr might_be variable_type
                   if( $2 == NOT ) {
                     parser_logop($$, NULL, not_op, $$);
                   }
+                }
+                ;
+
+until_expr:     bool_expr
+        |       EXIT {
+                  auto e = symbol_at(very_true_register());
+                  $$ = new_reference(cbl_field_of(e));
                 }
                 ;
 
@@ -7992,15 +8013,15 @@ perform_until:  test_before perform_cond
                 }
                 ;
 perform_cond:   UNTIL { parser_perform_conditional( &perform_current()->tgt); }
-                bool_expr
+                until_expr[expr]
                 {
                   parser_perform_conditional_end( &perform_current()->tgt);
-		  if( !is_conditional($bool_expr) ) {
+		  if( !is_conditional($expr) ) {
 		    error_msg(@1, "%s is not a condition expression",
-		             name_of($bool_expr->field));
+		             name_of($expr->field));
 		    YYERROR;
 		  }
-                  $$ = $bool_expr->cond();
+                  $$ = $expr->cond();
                 }
                 ;
 
@@ -10238,6 +10259,13 @@ ffi_by_ref:     scalar_arg[refer]
                   cbl_refer_t *r = new_reference(new_literal(@1, $1, quoted_e));
                   $$ = new cbl_ffi_arg_t(by_content_e, r);
                 }
+        |       num_literal
+                {
+                  cbl_message(@1, MfCallLiteral,
+                              "cannot pass %qs BY REFERENCE", $1->data.initial);
+                  cbl_refer_t *r = new_reference($1);
+                  $$ = new cbl_ffi_arg_t(by_content_e, r);
+                }
         |       ADDRESS OF scalar_arg[refer]
                 {
                   $$ = new cbl_ffi_arg_t(by_reference_e, $refer, address_of_e);
@@ -10840,9 +10868,7 @@ intrinsic:      function_udf
                               keyword_str($1), (long)(p - args.data()), name_of(p->field) );
                     YYERROR;
                   }
-                  $$ = is_numeric(args[0].field)?
-                         new_tempnumeric_float() :
-                         new_alphanumeric();
+                  $$ = intrinsic_return_field($1, args);
 		  $$->data.initial = keyword_str($1);
                   parser_intrinsic_callv( $$, intrinsic_cname($1),
 					  args.size(), args.data() );
@@ -10870,7 +10896,7 @@ intrinsic:      function_udf
 
 	|       BASECONVERT  '(' varg[r1] varg[r2] varg[r3] ')' {
                   location_set(@1);
-                  $$ = new_tempnumeric("BASECONVERT");
+                  $$ = new_alphanumeric("BASECONVERT", $r1->field->codeset.encoding);
 		  cbl_unimplemented("BASECONVERT");
                   if( ! intrinsic_call_3($$, BASECONVERT, $r1, $r2, $r3 )) YYERROR;
                 }
@@ -10881,7 +10907,7 @@ intrinsic:      function_udf
                 }
         |       CHAR  '(' expr[r1] ')' {
                   location_set(@1);
-                  $$ = new_alphanumeric(1,"CHAR");
+                  $$ = new_alphanumeric("CHAR");
                   if( ! intrinsic_call_1($$, CHAR, $r1, @r1)) YYERROR;
                 }
                 /* convert formulations: 
@@ -10965,7 +10991,7 @@ intrinsic:      function_udf
 
         |       FORMATTED_DATE '(' DATE_FMT[r1] expr[r2] ')' {
                   location_set(@1);
-                  $$ = new_alphanumeric(MAXLENGTH_FORMATTED_DATE, "FORMATTED-DATE");
+                  $$ = new_alphanumeric("FORMATTED-DATE");
                   auto r1 = new_reference(new_literal(strlen($r1), $r1, quoted_e));
                   symbol_temporary_location(r1->field, @r1);
                   if( ! intrinsic_call_2($$, FORMATTED_DATE, r1, $r2) ) YYERROR;
@@ -10975,7 +11001,7 @@ intrinsic:      function_udf
         |       FORMATTED_DATETIME '(' DATETIME_FMT[r1] expr[r2]
                                                         expr[r3] ')' {
                   location_set(@1);
-                  $$ = new_alphanumeric(MAXLENGTH_FORMATTED_DATETIME, "FORMATTED-DATETIME");
+                  $$ = new_alphanumeric("FORMATTED-DATETIME");
                   auto r1 = new_reference(new_literal(strlen($r1), $r1, quoted_e));
                   symbol_temporary_location(r1->field, @r1);
                   static cbl_refer_t r3(literally_zero);
@@ -10985,7 +11011,7 @@ intrinsic:      function_udf
         |       FORMATTED_DATETIME '(' DATETIME_FMT[r1] expr[r2]
                                         expr[r3] expr[r4] ')' {
                   location_set(@1);
-                  $$ = new_alphanumeric(MAXLENGTH_FORMATTED_DATETIME, "FORMATTED-DATETIME");
+                  $$ = new_alphanumeric("FORMATTED-DATETIME");
                   auto r1 = new_reference(new_literal(strlen($r1), $r1, quoted_e));
                   symbol_temporary_location(r1->field, @r1);
                   if( ! intrinsic_call_4($$, FORMATTED_DATETIME,
@@ -10997,7 +11023,7 @@ intrinsic:      function_udf
         |       FORMATTED_TIME '(' TIME_FMT[r1] expr[r2]
                                                 expr[r3]  ')' {
                   location_set(@1);
-                  $$ = new_alphanumeric(MAXLENGTH_FORMATTED_TIME, "FORMATTED-DATETIME");
+                  $$ = new_alphanumeric("FORMATTED-DATETIME");
                   auto r1 = new_reference(new_literal(strlen($r1), $r1, quoted_e));
                   symbol_temporary_location(r1->field, @r1);
                   if( ! intrinsic_call_3($$, FORMATTED_TIME,
@@ -11005,7 +11031,7 @@ intrinsic:      function_udf
                 }
         |       FORMATTED_TIME '(' TIME_FMT[r1] expr[r2]  ')' {
                   location_set(@1);
-                  $$ = new_alphanumeric(MAXLENGTH_FORMATTED_TIME, "FORMATTED-TIME");
+                  $$ = new_alphanumeric("FORMATTED-TIME");
                   auto r1 = new_reference(new_literal(strlen($r1), $r1, quoted_e));
                   auto r3 = new_reference(new_constant("0"));
                   symbol_temporary_location(r1->field, @r1);
@@ -11014,7 +11040,7 @@ intrinsic:      function_udf
                 }
         |       FORMATTED_CURRENT_DATE '(' DATETIME_FMT[r1] ')' {
                   location_set(@1);
-                  $$ = new_alphanumeric(MAXLENGTH_FORMATTED_DATETIME, "FORMATTED-CURRENT_DATE");
+                  $$ = new_alphanumeric("FORMATTED-CURRENT_DATE");
                   auto r1 = new_reference(new_literal(strlen($r1), $r1, quoted_e));
                   symbol_temporary_location(r1->field, @r1);
                   if( ! intrinsic_call_1($$, FORMATTED_CURRENT_DATE, r1, @r1) )
@@ -11099,13 +11125,13 @@ intrinsic:      function_udf
 		}
         |       lopper_case[func] '(' alpha_val[r1] ')' {
                   location_set(@1);
-                  $$ = new_alphanumeric($r1->field->data.capacity(), "lopper_case[func]");
+                  $$ = new_alphanumeric("lopper_case[func]");
                   if( ! intrinsic_call_1($$, $func, $r1, @r1)) YYERROR;
                 }
 
 	|	MODULE_NAME '(' module_type[type] ')'
 		{
-		  $$ = new_alphanumeric(sizeof(cbl_name_t), "MODULE-NAME");
+		  $$ = new_alphanumeric("MODULE-NAME");
 		  parser_module_name( $$, $type );
 		}
 
@@ -11201,7 +11227,7 @@ intrinsic:      function_udf
                      YYERROR;
                      break;
                   }
-		   $$ = new_alphanumeric("TRIM");
+                  $$ = new_alphanumeric("TRIM", $r1->field->codeset.encoding);
                   cbl_refer_t * how = new_reference($trim_trailing);
                   if( ! intrinsic_call_2($$, TRIM, $r1, how) ) YYERROR;
                 }
@@ -11266,7 +11292,7 @@ intrinsic:      function_udf
                   static auto one = new cbl_refer_t( new_constant("1") );
                   static auto four = new cbl_refer_t( new_constant("4") );
                   cbl_span_t year(one, four);
-                  auto r3 = new_reference(new_alphanumeric(MAXLENGTH_CALENDAR_DATE));
+                  auto r3 = new_reference(new_alphanumeric());
                   r3->refmod = year;
 
                   parser_intrinsic_call_0( r3->field, "__gg__current_date" );
@@ -11282,7 +11308,7 @@ intrinsic:      function_udf
                   static auto one = new cbl_refer_t( new_constant("1") );
                   static auto four = new cbl_refer_t( new_constant("4") );
                   cbl_span_t year(one, four);
-                  auto r3 = new_reference(new_alphanumeric(MAXLENGTH_CALENDAR_DATE));
+                  auto r3 = new_reference(new_alphanumeric());
                   r3->refmod = year;
 
                   parser_intrinsic_call_0( r3->field, "__gg__current_date" );
@@ -11308,7 +11334,7 @@ intrinsic:      function_udf
                   static auto one = new cbl_refer_t( new_constant("1") );
                   static auto four = new cbl_refer_t( new_constant("4") );
                   cbl_span_t year(one, four);
-                  auto r3 = new_reference(new_alphanumeric(MAXLENGTH_CALENDAR_DATE));
+                  auto r3 = new_reference(new_alphanumeric());
                   r3->refmod = year;
 
                   parser_intrinsic_call_0( r3->field, "__gg__current_date" );
@@ -11324,7 +11350,7 @@ intrinsic:      function_udf
                   static auto one = new cbl_refer_t( new_constant("1") );
                   static auto four = new cbl_refer_t( new_constant("4") );
                   cbl_span_t year(one, four);
-                  auto r3 = new_reference(new_alphanumeric(MAXLENGTH_CALENDAR_DATE));
+                  auto r3 = new_reference(new_alphanumeric());
                   r3->refmod = year;
 
                   parser_intrinsic_call_0( r3->field, "__gg__current_date" );
@@ -11350,7 +11376,7 @@ intrinsic:      function_udf
                   static auto one = new cbl_refer_t( new_constant("1") );
                   static auto four = new cbl_refer_t( new_constant("4") );
                   cbl_span_t year(one, four);
-                  auto r3 = new_reference(new_alphanumeric(MAXLENGTH_CALENDAR_DATE));
+                  auto r3 = new_reference(new_alphanumeric());
                   r3->refmod = year;
 
                   parser_intrinsic_call_0( r3->field, "__gg__current_date" );
@@ -11366,7 +11392,7 @@ intrinsic:      function_udf
                   static auto one = new cbl_refer_t( new_constant("1") );
                   static auto four = new cbl_refer_t( new_constant("4") );
                   cbl_span_t year(one, four);
-                  auto r3 = new_reference(new_alphanumeric(MAXLENGTH_CALENDAR_DATE));
+                  auto r3 = new_reference(new_alphanumeric());
                   r3->refmod = year;
 
                   parser_intrinsic_call_0( r3->field, "__gg__current_date" );
@@ -11531,7 +11557,7 @@ trim_trailing:  %empty          { $$ = new_constant("0"); }  // Remove both
 
 intrinsic0:     CURRENT_DATE {
                   location_set(@1);
-                  $$ = new_alphanumeric(MAXLENGTH_CALENDAR_DATE, "CURRENT-DATE");
+                  $$ = new_alphanumeric("CURRENT-DATE");
                   parser_intrinsic_call_0( $$, "__gg__current_date" );
                 }
         |       E {
@@ -11574,7 +11600,7 @@ intrinsic0:     CURRENT_DATE {
 
         |       PI {
                   location_set(@1);
-                  $$ = new_tempnumeric_float("PI");
+                  $$ = new_tempnumeric("PI");
                  parser_intrinsic_call_0( $$, "__gg__pi" );
                 }
         |       SECONDS_PAST_MIDNIGHT {
@@ -11590,7 +11616,7 @@ intrinsic0:     CURRENT_DATE {
         |       WHEN_COMPILED {
                   location_set(@1);
 		  // Returns YYYYMMDDhhmmssss-0500)
-                  $$ = new_alphanumeric(MAXLENGTH_CALENDAR_DATE, "WHEN-COMPILED"); 
+                  $$ = new_alphanumeric("WHEN-COMPILED"); 
                   parser_intrinsic_call_0( $$, "__gg__when_compiled" );
                 }
                 ;
@@ -13416,7 +13442,9 @@ initialize_one( cbl_num_result_t target, bool with_filler,
 {
   cbl_refer_t& tgt( target.refer );
   if( ! valid_target(tgt) ) return false;
-
+#if 0
+  if( field_index(target.refer.field) == return_code_register() ) return true;
+#endif
   // Rule 1 c: is valid for VALUE, REPLACING, or DEFAULT
   // If no VALUE (category none), set to blank/zero.
   if( value_category == data_category_none && replacements.empty() ) {

@@ -57,30 +57,6 @@ enum binding_slots
  BINDING_SLOTS_FIXED = BINDING_SLOT_GLOBAL + 1
 };
 
-/* Create an overload suitable for recording an artificial TYPE_DECL
-   and another decl.  We use this machanism to implement the struct
-   stat hack.  */
-
-#define STAT_HACK_P(N) ((N) && TREE_CODE (N) == OVERLOAD && OVL_LOOKUP_P (N))
-#define STAT_TYPE_VISIBLE_P(N) TREE_USED (OVERLOAD_CHECK (N))
-#define STAT_TYPE(N) TREE_TYPE (N)
-#define STAT_DECL(N) OVL_FUNCTION (N)
-#define STAT_VISIBLE(N) OVL_CHAIN (N)
-#define MAYBE_STAT_DECL(N) (STAT_HACK_P (N) ? STAT_DECL (N) : N)
-#define MAYBE_STAT_TYPE(N) (STAT_HACK_P (N) ? STAT_TYPE (N) : NULL_TREE)
-
-/* When a STAT_HACK_P is true, OVL_USING_P and OVL_EXPORT_P are valid
-   and apply to the hacked type.  */
-
-/* For regular (maybe) overloaded functions, we have OVL_HIDDEN_P.
-   But we also need to indicate hiddenness on implicit type decls
-   (injected friend classes), and (coming soon) decls injected from
-   block-scope externs.  It is too awkward to press the existing
-   overload marking for that.  If we have a hidden non-function, we
-   always create a STAT_HACK, and use these two markers as needed.  */
-#define STAT_TYPE_HIDDEN_P(N) OVL_HIDDEN_P (N)
-#define STAT_DECL_HIDDEN_P(N) OVL_DEDUP_P (N)
-
 /* Create a STAT_HACK node with DECL as the value binding and TYPE as
    the type binding.  */
 
@@ -1893,6 +1869,11 @@ fields_linear_search (tree klass, tree name, bool want_type)
 	    continue;
 	}
 
+      if (TYPE_DECL_WAS_UNNAMED (decl))
+	/* Ignore DECL_NAME given to unnamed TYPE_DECLs named for linkage
+	   purposes.  */
+	continue;
+
       if (DECL_DECLARES_FUNCTION_P (decl))
 	/* Functions are found separately.  */
 	continue;
@@ -2369,7 +2350,13 @@ count_class_fields (tree klass)
 	     && ANON_AGGR_TYPE_P (TREE_TYPE (fields)))
       n_fields += count_class_fields (TREE_TYPE (fields));
     else if (DECL_NAME (fields))
-      n_fields += 1;
+      {
+	if (TYPE_DECL_WAS_UNNAMED (fields))
+	  /* Ignore DECL_NAME given to unnamed TYPE_DECLs named for linkage
+	     purposes.  */
+	  continue;
+	n_fields += 1;
+      }
 
   return n_fields;
 }
@@ -2393,6 +2380,10 @@ member_vec_append_class_fields (vec<tree, va_gc> *member_vec, tree klass)
 	if (TREE_CODE (field) == USING_DECL
 	    && IDENTIFIER_CONV_OP_P (DECL_NAME (field)))
 	  field = ovl_make (conv_op_marker, field);
+	else if (TYPE_DECL_WAS_UNNAMED (field))
+	  /* Ignore DECL_NAME given to unnamed TYPE_DECLs named for linkage
+	     purposes.  */
+	  continue;
 	member_vec->quick_push (field);
       }
 }
@@ -2724,7 +2715,9 @@ pop_local_binding (tree id, tree decl)
     binding->value = NULL_TREE;
   else if (binding->type == decl)
     binding->type = NULL_TREE;
-  else
+  /* Ignore DECL_NAME given to unnamed TYPE_DECLs named for linkage
+     purposes.  */
+  else if (!TYPE_DECL_WAS_UNNAMED (decl))
     {
       /* Name-independent variable was found after at least one declaration
 	 with the same name.  */
@@ -3697,6 +3690,22 @@ set_decl_context_in_fn (tree ctx, tree decl)
 void
 push_local_extern_decl_alias (tree decl)
 {
+  if (flag_reflection)
+    {
+      if (lookup_attribute ("internal ", "annotation ",
+			    DECL_ATTRIBUTES (decl)))
+	error_at (DECL_SOURCE_LOCATION (decl),
+		  "annotation applied to block scope extern %qD",
+		  decl);
+      if (TREE_CODE (decl) == FUNCTION_DECL)
+	for (tree arg = DECL_ARGUMENTS (decl); arg; arg = DECL_CHAIN (arg))
+	  if (lookup_attribute ("internal ", "annotation ",
+				DECL_ATTRIBUTES (arg)))
+	    error_at (DECL_SOURCE_LOCATION (arg),
+		      "annotation applied to parameter %qD of block scope "
+		      "extern", arg);
+    }
+
   if (dependent_type_p (TREE_TYPE (decl))
       || (processing_template_decl
 	  && VAR_P (decl)
@@ -4345,6 +4354,120 @@ ovl_iterator::exporting_p () const
   if (TREE_CODE (ovl) == USING_DECL)
     return DECL_MODULE_EXPORT_P (ovl);
   return OVL_EXPORT_P (ovl);
+}
+
+/* Given a namespace NS, walk all of its bindings, calling CALLBACK
+   for all visible decls.  Any lazy module bindings will be loaded
+   at this point.  */
+
+void
+walk_namespace_bindings (tree ns, void (*callback) (tree decl, void *data),
+			 void *data)
+{
+  for (tree o : *DECL_NAMESPACE_BINDINGS (ns))
+    if (TREE_CODE (o) == BINDING_VECTOR)
+      {
+	/* Modules may have duplicate entities on the binding slot.
+	   Keep track of this as needed, and ensure we only call
+	   the callback once per entity.  */
+	hash_set<tree> seen;
+	const auto callback_maybe_dup = [&](tree decl)
+	  {
+	    if (!seen.add (decl))
+	      callback (decl, data);
+	  };
+
+	/* First the current module.  There should be no dups yet,
+	   but track anything that might be dup'd later.  */
+	binding_cluster *cluster = BINDING_VECTOR_CLUSTER_BASE (o);
+	if (tree bind = cluster->slots[BINDING_SLOT_CURRENT])
+	  {
+	    tree value = bind;
+	    if (STAT_HACK_P (bind))
+	      {
+		if (STAT_TYPE (bind) && !STAT_TYPE_HIDDEN_P (bind))
+		  callback_maybe_dup (STAT_TYPE (bind));
+		if (STAT_DECL_HIDDEN_P (bind))
+		  value = NULL_TREE;
+		else
+		  value = STAT_DECL (bind);
+	      }
+	    value = ovl_skip_hidden (value);
+	    for (tree decl : ovl_range (value))
+	      callback_maybe_dup (decl);
+	  }
+
+	/* Now the imported bindings.  */
+	/* FIXME: We probably want names visible from the outermost point of
+	   constant evaluation, regardless of instantiations.  */
+	bitmap imports = get_import_bitmap ();
+	tree name = BINDING_VECTOR_NAME (o);
+
+	unsigned ix = BINDING_VECTOR_NUM_CLUSTERS (o);
+	if (BINDING_VECTOR_SLOTS_PER_CLUSTER == BINDING_SLOTS_FIXED)
+	  {
+	    ix--;
+	    cluster++;
+	  }
+
+	/* Do this in forward order, so we load modules in an order
+	   the user expects.  */
+	for (; ix--; cluster++)
+	  for (unsigned jx = 0; jx != BINDING_VECTOR_SLOTS_PER_CLUSTER; jx++)
+	    {
+	      /* Are we importing this module?  */
+	      if (unsigned base = cluster->indices[jx].base)
+		if (unsigned span = cluster->indices[jx].span)
+		  do
+		    if (bitmap_bit_p (imports, base))
+		      goto found;
+		  while (++base, --span);
+	      continue;
+
+	    found:;
+	      /* Is it loaded?  */
+	      unsigned mod = cluster->indices[jx].base;
+	      if (cluster->slots[jx].is_lazy ())
+		{
+		  gcc_assert (cluster->indices[jx].span == 1);
+		  lazy_load_binding (mod, ns, name, &cluster->slots[jx]);
+		}
+
+	      tree bind = cluster->slots[jx];
+	      if (!bind)
+		/* Load errors could mean there's nothing here.  */
+		continue;
+
+	      /* Extract what we can see from here.  If there's no
+		 stat_hack, then everything was exported.  */
+	      tree value = bind;
+	      if (STAT_HACK_P (bind))
+		{
+		  if (STAT_TYPE_VISIBLE_P (bind))
+		    callback_maybe_dup (STAT_TYPE (bind));
+		  value = STAT_VISIBLE (bind);
+		}
+	      value = ovl_skip_hidden (value);
+	      for (tree decl : ovl_range (value))
+		callback_maybe_dup (decl);
+	    }
+      }
+    else
+      {
+	tree bind = o;
+	if (STAT_HACK_P (bind))
+	  {
+	    if (STAT_TYPE (bind) && !STAT_TYPE_HIDDEN_P (bind))
+	      callback (STAT_TYPE (bind), data);
+	    if (STAT_DECL_HIDDEN_P (bind))
+	      bind = NULL_TREE;
+	    else
+	      bind = STAT_DECL (bind);
+	  }
+	bind = ovl_skip_hidden (bind);
+	for (tree decl : ovl_range (bind))
+	  callback (decl, data);
+      }
 }
 
 /* Given a namespace-level binding BINDING, walk it, calling CALLBACK
@@ -5373,18 +5496,42 @@ check_can_export_using_decl (tree binding)
 	  && !DECL_MODULE_EXPORT_P (not_tmpl)))
     {
       auto_diagnostic_group d;
-      error ("exporting %q#D that does not have external linkage",
-	     binding);
-      if (linkage == lk_none)
-	inform (DECL_SOURCE_LOCATION (entity),
-		"%q#D declared here with no linkage", entity);
-      else if (linkage == lk_internal)
-	inform (DECL_SOURCE_LOCATION (entity),
-		"%q#D declared here with internal linkage", entity);
+      bool diag = true;
+
+      /* As an extension, we'll allow exposing internal entities from
+	 the GMF, to aid in migration to modules.  For now, we only
+	 support this for functions and variables; see also 
+	 depset::is_tu_local.  */
+      bool relaxed = (VAR_OR_FUNCTION_DECL_P (not_tmpl)
+		      && !(DECL_LANG_SPECIFIC (not_tmpl)
+			   && DECL_MODULE_PURVIEW_P (not_tmpl)));
+      if (relaxed)
+	{
+	  gcc_checking_assert (linkage != lk_external);
+	  diag = (warning_enabled_at (DECL_SOURCE_LOCATION (entity),
+				      OPT_Wexpose_global_module_tu_local)
+		  && pedwarn (input_location,
+			      OPT_Wexpose_global_module_tu_local,
+			      "exporting %q#D that does not have "
+			      "external linkage", binding));
+	}
       else
-	inform (DECL_SOURCE_LOCATION (entity),
-		"%q#D declared here with module linkage", entity);
-      return false;
+	error ("exporting %q#D that does not have external linkage", binding);
+
+      if (diag)
+	{
+	  if (linkage == lk_none)
+	    inform (DECL_SOURCE_LOCATION (entity),
+		    "%q#D declared here with no linkage", entity);
+	  else if (linkage == lk_internal)
+	    inform (DECL_SOURCE_LOCATION (entity),
+		    "%q#D declared here with internal linkage", entity);
+	  else
+	    inform (DECL_SOURCE_LOCATION (entity),
+		    "%q#D declared here with module linkage", entity);
+	}
+
+      return relaxed;
     }
 
   return true;
@@ -8383,6 +8530,13 @@ lookup_elaborated_type (tree name, TAG_how how)
 
   /* Look in the innermost namespace.  */
   tree ns = b->this_entity;
+
+  /* If an import is going to provide a definition for this tag,
+     load it now so that we don't get confused later when processing
+     this tag's definition.  */
+  if (modules_p ())
+    lazy_load_pendings (ns, name);
+
   if (tree *slot = find_namespace_slot (ns, name))
     {
       tree bind = *slot;
@@ -8689,12 +8843,6 @@ pushtag (tree name, tree type, TAG_how how)
 	}
       else
 	{
-	  /* If an import is going to provide a definition for this tag,
-	     load it now so that we don't get confused later when processing
-	     this tag's definition.  */
-	  if (modules_p ())
-	    lazy_load_pendings (decl);
-
 	  decl = do_pushdecl_with_scope
 	    (decl, b, /*hiding=*/(how == TAG_how::HIDDEN_FRIEND));
 	  if (decl == error_mark_node)

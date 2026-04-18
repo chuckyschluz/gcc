@@ -176,9 +176,9 @@ TokenCollector::visit (Attribute &attrib)
 		static_cast<AttrInputLiteral &> (attrib.get_attr_input ()));
 	      break;
 	    }
-	  case AST::AttrInput::AttrInputType::MACRO:
+	  case AST::AttrInput::AttrInputType::EXPR:
 	    {
-	      visit (static_cast<AttrInputMacro &> (attrib.get_attr_input ()));
+	      visit (static_cast<AttrInputExpr &> (attrib.get_attr_input ()));
 	      break;
 	    }
 	  case AST::AttrInput::AttrInputType::META_ITEM:
@@ -899,12 +899,10 @@ TokenCollector::visit (AttrInputLiteral &literal)
 }
 
 void
-TokenCollector::visit (AttrInputMacro &macro)
+TokenCollector::visit (AttrInputExpr &attr)
 {
-  describe_node (std::string ("AttrInputMacro"), [this, &macro] () {
-    push (Rust::Token::make (EQUAL, UNDEF_LOCATION));
-    visit (macro.get_macro ());
-  });
+  describe_node (std::string ("AttrInputExpr"),
+		 [this, &attr] () { visit (attr.get_expr ()); });
 }
 
 void
@@ -2449,7 +2447,11 @@ TokenCollector::visit (Trait &trait)
     push (Rust::Token::make (TRAIT, trait.get_locus ()));
     push (Rust::Token::make_identifier (UNDEF_LOCATION, std::move (id)));
 
-    visit (trait.get_generic_params ());
+    if (trait.has_generics ())
+      visit (trait.get_generic_params ());
+    if (!trait.get_type_param_bounds ().empty ())
+      push (Rust::Token::make ((COLON), trait.get_locus ()));
+    visit_items_joined_by_separator (trait.get_type_param_bounds (), PLUS);
 
     visit_items_as_block (trait.get_trait_items (), {});
   });

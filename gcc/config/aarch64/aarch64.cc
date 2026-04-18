@@ -9526,11 +9526,30 @@ aarch64_save_callee_saves (poly_int64 bytes_below_sp,
       machine_mode mode = aarch64_reg_save_mode (regno);
       rtx reg = gen_rtx_REG (mode, regno);
       rtx move_src = reg;
+      rtx old_r0 = NULL_RTX;
       offset = frame.reg_offset[regno] - bytes_below_sp;
       if (regno == VG_REGNUM)
 	{
-	  move_src = gen_rtx_REG (DImode, IP0_REGNUM);
-	  emit_move_insn (move_src, gen_int_mode (aarch64_sve_vg, DImode));
+	  if (AARCH64_HAVE_ISA (SVE)
+	      || aarch64_cfun_incoming_pstate_sm () == AARCH64_ISA_MODE_SM_ON)
+	    {
+	      /* This check cannot just use TARGET_SVE, because the streaming
+		 state (and hence instruction availability) differs between the
+		 function body and prologue in locally streaming functions.  */
+	      move_src = gen_rtx_REG (DImode, IP0_REGNUM);
+	      emit_move_insn (move_src, gen_int_mode (aarch64_sve_vg, DImode));
+	    }
+	  else
+	    {
+	      auto &args = crtl->args.info;
+	      if (args.aapcs_ncrn > 0)
+		{
+		  old_r0 = gen_rtx_REG (DImode, PROBE_STACK_FIRST_REGNUM);
+		  emit_move_insn (old_r0, gen_rtx_REG (DImode, R0_REGNUM));
+		}
+	      emit_insn (gen_aarch64_get_current_vg ());
+	      move_src = gen_rtx_REG (DImode, R0_REGNUM);
+	    }
 	}
       rtx base_rtx = stack_pointer_rtx;
       poly_int64 sp_offset = offset;
@@ -9621,9 +9640,13 @@ aarch64_save_callee_saves (poly_int64 bytes_below_sp,
       RTX_FRAME_RELATED_P (insn) = frame_related_p;
 
       /* Emit a fake instruction to indicate that the VG save slot has
-	 been initialized.  */
+	 been initialized, and then restore R0 if necessary.  */
       if (regno == VG_REGNUM)
-	emit_insn (gen_aarch64_old_vg_saved (move_src, mem));
+	{
+	  emit_insn (gen_aarch64_old_vg_saved (move_src, mem));
+	  if (old_r0)
+	    emit_move_insn (gen_rtx_REG (DImode, R0_REGNUM), old_r0);
+	}
     }
 }
 
@@ -14326,8 +14349,8 @@ aarch64_select_rtx_section (machine_mode mode,
     return function_section (current_function_decl);
 
   /* When using anchors for constants use the readonly section.  */
-  if ((CONST_INT_P (x) || CONST_DOUBLE_P (x))
-      && known_le (GET_MODE_SIZE (mode), 8))
+  if ((CONST_INT_P (x) || CONST_DOUBLE_P (x) || CONST_VECTOR_P (x))
+      && known_le (GET_MODE_SIZE (mode), 16))
     return readonly_data_section;
 
   return default_elf_select_rtx_section (mode, x, align);
@@ -16211,8 +16234,24 @@ cost_plus:
     case GEU:
     case LE:
     case LEU:
-
-      return false; /* All arguments must be in registers.  */
+      {
+	op0 = XEXP (x, 0);
+	op1 = XEXP (x, 1);
+	machine_mode inner_mode = GET_MODE (op0);
+	*cost += rtx_cost (op0, inner_mode, code, 0, speed);
+	if (op1 != CONST0_RTX (inner_mode))
+	  {
+	    unsigned int vec_flags = aarch64_classify_vector_mode (mode);
+	    bool unsigned_p = code == LTU || code == LEU || code == GTU
+			      || code == GEU;
+	    if ((vec_flags & VEC_SVE_DATA) == 0
+		|| !aarch64_sve_cmp_immediate_p (op1, !unsigned_p))
+	      *cost += rtx_cost (op1, inner_mode, code, 1, speed);
+	    if (code == NE && (vec_flags & VEC_ADVSIMD))
+	      *cost += COSTS_N_INSNS (1);
+	  }
+	return true;
+      }
 
     case FMA:
       op0 = XEXP (x, 0);
@@ -19502,7 +19541,7 @@ aarch64_adjust_generic_arch_tuning (struct tune_params &current_tune)
   /* Neoverse V1 is the only core that is known to benefit from
      AARCH64_EXTRA_TUNE_CSE_SVE_VL_CONSTANTS.  There is therefore no
      point enabling it for SVE2 and above.  */
-  if (TARGET_SVE2)
+  if (TARGET_SVE2 || TARGET_SME)
     current_tune.extra_tuning_flags
       &= ~AARCH64_EXTRA_TUNE_CSE_SVE_VL_CONSTANTS;
   if (!AARCH64_HAVE_ISA(V8_8A))
@@ -19672,10 +19711,7 @@ aarch64_override_options_internal (struct gcc_options *opts)
 	      " option %<-march%>, or by using the %<target%>"
 	      " attribute or pragma", "sme");
       opts->x_target_flags &= ~MASK_GENERAL_REGS_ONLY;
-      auto new_flags = (isa_flags
-			| feature_deps::SME ().enable
-			/* TODO: Remove once we support SME without SVE2.  */
-			| feature_deps::SVE2 ().enable);
+      auto new_flags = isa_flags | feature_deps::SME ().enable;
       aarch64_set_asm_isa_flags (opts, new_flags);
     }
 
@@ -19808,17 +19844,11 @@ aarch64_override_options_internal (struct gcc_options *opts)
       & AARCH64_EXTRA_TUNE_DISPATCH_SCHED)
     gcc_assert (aarch64_tune_params.dispatch_constraints != NULL);
 
-  /* TODO: SME codegen without SVE2 is not supported, once this support is added
-     remove this 'sorry' and the implicit enablement of SVE2 in the checks for
-     streaming mode above in this function.  */
-  if (TARGET_SME && !TARGET_SVE2)
-    sorry ("no support for %qs without %qs", "sme", "sve2");
-
-  /* Set scalar costing to a high value such that we always pick
-     vectorization.  Increase scalar costing by 10000%.  */
+  /* Enable possible unprofitable vectorization.  */
   if (opts->x_flag_aarch64_max_vectorization)
     SET_OPTION_IF_UNSET (opts, &global_options_set,
-			 param_vect_scalar_cost_multiplier, 10000);
+			 param_vect_allow_possibly_not_worthwhile_vectorizations,
+			 1);
 
   /* Synchronize the -mautovec-preference and aarch64_autovec_preference using
      whichever one is not default.  If both are set then prefer the param flag
@@ -21708,7 +21738,7 @@ aarch64_generate_version_dispatcher_body (void *node_p)
 	 not.  This happens for methods in derived classes that override
 	 virtual methods in base classes but are not explicitly marked as
 	 virtual.  */
-      if (DECL_VINDEX (versn->decl))
+      if (DECL_VIRTUAL_P (versn->decl))
 	sorry ("virtual function multiversioning not supported");
 
       if (dump_enabled_p ())
@@ -30386,7 +30416,7 @@ aarch64_scalar_mode_supported_p (scalar_mode mode)
     return default_decimal_float_supported_p ();
 
   if (mode == TFmode)
-    return true;
+    return TARGET_LONG_DOUBLE_128 != 0;
 
   return ((mode == HFmode || mode == BFmode)
 	  ? true
@@ -30467,7 +30497,7 @@ aarch64_bitint_type_info (int n, struct bitint_info *info)
   else
     info->abi_limb_mode = info->limb_mode;
   info->big_endian = TARGET_BIG_END;
-  info->extended = false;
+  info->extended = bitint_ext_undef;
   return true;
 }
 

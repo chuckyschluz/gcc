@@ -356,6 +356,9 @@ poly_uint16 riscv_vector_chunks;
 /* The number of bytes in a vector chunk.  */
 unsigned riscv_bytes_per_vector_chunk;
 
+/* Whether we are currently registering builtins.  */
+bool riscv_registering_builtins;
+
 /* Index R is the smallest register class that contains register R.  */
 const enum reg_class riscv_regno_to_class[FIRST_PSEUDO_REGISTER] = {
   GR_REGS,	GR_REGS,	GR_REGS,	GR_REGS,
@@ -7461,8 +7464,8 @@ riscv_get_vls_cc_attr (const_tree args, bool check_only = false)
   if (!riscv_valid_abi_vlen_vls_cc_p (abi_vlen) && !check_only)
     {
       error_at (input_location,
-		"unsupported %<ABI_VLEN%> value %d for %qs attribute;"
-		"%<ABI_VLEN must%> be in the range [32, 16384] and must be "
+		"unsupported %<ABI_VLEN%> value %d for %qs attribute; "
+		"%<ABI_VLEN%> must be in the range [32, 16384] and must be "
 		"a power of 2",
 		abi_vlen, "riscv_vls_cc");
       return RISCV_CC_UNKNOWN;
@@ -12343,11 +12346,11 @@ riscv_override_options_internal (struct gcc_options *opts)
   /* Convert -march and -mrvv-vector-bits to a chunks count.  */
   riscv_vector_chunks = riscv_convert_vector_chunks (opts);
 
-  /* Set scalar costing to a high value such that we always pick
-     vectorization.  Increase scalar costing by 100x.  */
+  /* Enable possible unprofitable vectorization.  */
   if (opts->x_riscv_max_vectorization)
     SET_OPTION_IF_UNSET (&global_options, &global_options_set,
-			 param_vect_scalar_cost_multiplier, 10000);
+			 param_vect_allow_possibly_not_worthwhile_vectorizations,
+			 1);
 
   if (opts->x_flag_cf_protection != CF_NONE)
     {
@@ -13458,7 +13461,17 @@ static bool
 riscv_vector_mode_supported_p (machine_mode mode)
 {
   if (TARGET_VECTOR)
-    return riscv_vector_mode_p (mode);
+    {
+      /* Avoid fractional LMUL modes for xtheadvector with the exception
+	 of builtin registration time.  During registration, all modes
+	 must be available so the order and numbering is consistent,
+	 see PR123279.  */
+      if (TARGET_XTHEADVECTOR && !riscv_registering_builtins
+	  && maybe_lt (GET_MODE_SIZE (mode), BYTES_PER_RISCV_VECTOR))
+	return false;
+
+      return riscv_vector_mode_p (mode);
+    }
 
   return false;
 }
@@ -14913,7 +14926,7 @@ riscv_bitint_type_info (int n, struct bitint_info *info)
     info->abi_limb_mode = DImode;
 
   info->big_endian = TARGET_BIG_ENDIAN;
-  info->extended = true;
+  info->extended = bitint_ext_full;
   return true;
 }
 
@@ -15008,8 +15021,8 @@ riscv_same_function_versions (string_slice v1, const_tree, string_slice v2,
 
   /* Invalid features should have already been rejected by this point so
      providing no location should be okay.  */
-  parse_features_for_version (v1, UNKNOWN_LOCATION, mask1, prio1);
-  parse_features_for_version (v2, UNKNOWN_LOCATION, mask2, prio2);
+  parse_features_for_version (v1, nullptr, mask1, prio1);
+  parse_features_for_version (v2, nullptr, mask2, prio2);
 
   return compare_fmv_features (mask1, mask2, prio1, prio2) == 0;
 }
@@ -15045,16 +15058,29 @@ riscv_compare_version_priority (tree decl1, tree decl2)
 bool
 riscv_check_target_clone_version (string_slice str, location_t *loc_p)
 {
-  struct riscv_feature_bits mask;
-  int prio;
+  if (str == "default")
+    return true;
 
-  /* Currently it is not possible to parse without emitting errors on failure
-     so do not reject on a failed parse, as this would then emit two
-     diagnostics.  Instead let errors be emitted which will halt
-     compilation.  */
-  parse_features_for_version (str, loc_p, mask, prio);
+  struct cl_target_option cur_target;
+  cl_target_option_save (&cur_target, &global_options,
+			 &global_options_set);
 
-  return true;
+  struct cl_target_option *default_opts
+    = TREE_TARGET_OPTION (target_option_default_node);
+  cl_target_option_restore (&global_options, &global_options_set,
+			    default_opts);
+
+  bool ok = riscv_process_target_version_str (str, NULL);
+
+  cl_target_option_restore (&global_options, &global_options_set,
+			    &cur_target);
+
+  if (!ok && loc_p)
+    warning_at (*loc_p, OPT_Wattributes,
+		"invalid version %qB for %<target_clones%> attribute",
+		&str);
+
+  return ok;
 }
 
 /* Implement TARGET_MANGLE_DECL_ASSEMBLER_NAME, to add function multiversioning
@@ -15530,7 +15556,7 @@ riscv_generate_version_dispatcher_body (void *node_p)
 	 not.  This happens for methods in derived classes that override
 	 virtual methods in base classes but are not explicitly marked as
 	 virtual.  */
-      if (DECL_VINDEX (versn->decl))
+      if (DECL_VIRTUAL_P (versn->decl))
 	sorry ("virtual function multiversioning not supported");
 
       fn_ver_vec.safe_push (versn->decl);
@@ -15893,7 +15919,7 @@ synthesize_ior_xor (rtx_code code, rtx operands[3])
 {
   /* Trivial cases that don't need synthesis.  */
   if (SMALL_OPERAND (INTVAL (operands[2]))
-     || ((TARGET_ZBS || TARGET_ZBKB)
+     || (TARGET_ZBS
 	 && single_bit_mask_operand (operands[2], word_mode)))
     return false;
 

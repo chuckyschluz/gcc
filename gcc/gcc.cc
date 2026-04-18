@@ -54,6 +54,7 @@ compilation is specified by a string called a "spec".  */
 #include "common/common-target.h"
 #include "gcc-urlifier.h"
 #include "opts-diagnostic.h"
+#include "auto-profile.h" /* for AUTO_PROFILE_VERSION.  */
 
 #ifndef MATH_LIBRARY
 #define MATH_LIBRARY "m"
@@ -4297,6 +4298,7 @@ driver_handle_option (struct gcc_options *opts,
     case OPT__no_sysroot_suffix:
     case OPT_pass_exit_codes:
     case OPT_print_search_dirs:
+    case OPT_print_autofdo_gcov_version:
     case OPT_print_file_name_:
     case OPT_print_prog_name_:
     case OPT_print_multi_lib:
@@ -8830,6 +8832,12 @@ driver::maybe_print_and_exit () const
       return (0);
     }
 
+  if (print_autofdo_gcov_version)
+    {
+      printf ("%d\n", AUTO_PROFILE_VERSION);
+      return (0);
+    }
+
   if (print_file_name)
     {
       printf ("%s\n", find_file (print_file_name));
@@ -11230,7 +11238,8 @@ find_fortran_preinclude_file (int argc, const char **argv)
   return result;
 }
 
-/* The function takes any number of arguments and joins them together.
+/* The function takes any number of arguments and joins them together,
+   escaping any special characters.
 
    This seems to be necessary to build "-fjoined=foo.b" from "-fseparate foo.a"
    with a %{fseparate*:-fjoined=%.b$*} rule without adding undesired spaces:
@@ -11243,12 +11252,15 @@ find_fortran_preinclude_file (int argc, const char **argv)
 static const char *
 join_spec_func (int argc, const char **argv)
 {
-  if (argc == 1)
-    return argv[0];
-  for (int i = 0; i < argc; ++i)
-    obstack_grow (&obstack, argv[i], strlen (argv[i]));
-  obstack_1grow (&obstack, '\0');
-  return XOBFINISH (&obstack, const char *);
+  const char *result = argv[0];
+  if (argc != 1)
+    {
+      for (int i = 0; i < argc; ++i)
+	obstack_grow (&obstack, argv[i], strlen (argv[i]));
+      obstack_1grow (&obstack, '\0');
+      result = XOBFINISH (&obstack, const char *);
+    }
+  return quote_spec (xstrdup (result));
 }
 
 /* If any character in ORIG fits QUOTE_P (_, P), reallocate the string

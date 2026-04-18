@@ -2506,6 +2506,9 @@ gfc_simplify_expr (gfc_expr *p, int type)
 	      start--;  /* Convert from one-based to zero-based.  */
 	    }
 
+	  if (start < 0)
+	    return false;
+
 	  end = p->value.character.length;
 	  if (p->ref && p->ref->u.ss.end)
 	    gfc_extract_hwi (p->ref->u.ss.end, &end);
@@ -7104,4 +7107,18 @@ gfc_pdt_find_component_copy_initializer (gfc_symbol *sym, const char *name)
 	return gfc_copy_expr (comp->initializer);
     }
   return NULL;
+}
+
+
+/* Test for parameterized array or string components.  */
+
+bool has_parameterized_comps (gfc_symbol * der_type)
+{
+  bool parameterized_comps = false;
+  for (gfc_component *c = der_type->components; c; c = c->next)
+    if (c->attr.pdt_array || c->attr.pdt_string)
+      parameterized_comps = true;
+    else if (IS_PDT (c) && strcmp (der_type->name, c->ts.u.derived->name))
+      parameterized_comps = has_parameterized_comps (c->ts.u.derived);
+  return parameterized_comps;
 }

@@ -807,7 +807,31 @@ extern bool null_pointer_constant_p (const_tree);
 inline bool
 c_type_variably_modified_p (tree t)
 {
-  return error_mark_node != t && C_TYPE_VARIABLY_MODIFIED (t);
+  if (error_mark_node == t)
+    return false;
+  if (C_TYPE_VARIABLY_MODIFIED (t))
+    return true;
+  if (TYPE_STRUCTURAL_EQUALITY_P (t))
+    {
+      /* The flag may not have been set yet because of incomplete
+	 structure or union types completed later.  */
+      switch (TREE_CODE (t))
+	{
+	case ARRAY_TYPE:
+	case FUNCTION_TYPE:
+	case POINTER_TYPE:
+	  /* Recurse.  */
+	  if (c_type_variably_modified_p (TREE_TYPE (t)))
+	    {
+	      C_TYPE_VARIABLY_MODIFIED (t) = 1;
+	      return true;
+	    }
+	  break;
+	default:
+	  break;
+	}
+    }
+  return false;
 }
 
 inline bool
@@ -931,6 +955,7 @@ extern tree c_build_function_call_vec (location_t, const vec<location_t>&,
 				       vec<tree, va_gc> *);
 extern tree c_omp_clause_copy_ctor (tree, tree, tree);
 extern tree c_reconstruct_complex_type (tree, tree);
+extern tree c_type_canonical (tree);
 extern tree c_build_type_attribute_variant (tree ntype, tree attrs);
 extern tree c_build_pointer_type (tree type);
 extern tree c_build_array_type (tree type, tree domain);

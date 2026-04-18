@@ -5346,7 +5346,7 @@ gimple_fold_builtin_stdarg (gimple_stmt_iterator *gsi, gcall *call)
 	}
       unlink_stmt_vdef (call);
       release_defs (call);
-      gsi_replace (gsi, gimple_build_nop (), true);
+      gsi_replace (gsi, gimple_build_nop (), false);
       return true;
 
     default:
@@ -6066,6 +6066,10 @@ gimple_fold_call (gimple_stmt_iterator *gsi, bool inplace)
     }
 
   if (inplace)
+    return changed;
+
+  /* Don't constant fold functions which can change the control. */
+  if (gimple_call_ctrl_altering_p (stmt))
     return changed;
 
   /* Check for builtins that CCP can handle using information not

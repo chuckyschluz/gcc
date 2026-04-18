@@ -1996,6 +1996,7 @@ simplify_operand_subreg (int nop, machine_mode reg_mode)
 	   && REGNO (reg) >= FIRST_PSEUDO_REGISTER
 	   && paradoxical_subreg_p (operand)
 	   && (inner_hard_regno = lra_get_regno_hard_regno (REGNO (reg))) >= 0
+	   && hard_regno_nregs (inner_hard_regno, mode) > 1
 	   && ((hard_regno
 		= simplify_subreg_regno (inner_hard_regno, innermode,
 					 SUBREG_BYTE (operand), mode)) < 0
@@ -2741,7 +2742,14 @@ process_alt_operands (int only_alternative)
 		  winreg = true;
 		  if (REG_P (op))
 		    {
+		      rtx orig_op = *curr_id->operand_loc[nop];
+		      if (GET_CODE (orig_op) == SUBREG && HARD_REGISTER_P (op)
+			  && !targetm.hard_regno_mode_ok (REGNO (op),
+							  GET_MODE(orig_op)))
+			break;
+
 		      tree decl;
+
 		      if (hard_regno[nop] >= 0
 			  && in_hard_reg_set_p (this_alternative_set,
 						mode, hard_regno[nop])
@@ -3336,7 +3344,15 @@ process_alt_operands (int only_alternative)
 	    early_clobbered_nops[early_clobbered_regs_num++] = nop;
 	}
 
-      if (curr_insn_set != NULL_RTX && n_operands == 2
+      if (curr_insn_set != NULL_RTX
+	  /* Allow just two operands or three operands where the third
+	     is a clobber.  */
+	  && (n_operands == 2
+	      || (n_operands == 3
+		  && GET_CODE (PATTERN (curr_insn)) == PARALLEL
+		  && XVECLEN (PATTERN (curr_insn), 0) == 2
+		  && GET_CODE (XVECEXP (PATTERN (curr_insn), 0, 1))
+		     == CLOBBER))
 	  /* Prevent processing non-move insns.  */
 	  && (GET_CODE (SET_SRC (curr_insn_set)) == SUBREG
 	      || SET_SRC (curr_insn_set) == no_subreg_reg_operand[1])
@@ -4237,7 +4253,7 @@ simple_move_p (void)
 	  /* The backend guarantees that register moves of cost 2
 	     never need reloads.  */
 	  && targetm.register_move_cost (GET_MODE (src), sclass, dclass) == 2);
- }
+}
 
 /* Swap operands NOP and NOP + 1. */
 static inline void
@@ -4283,6 +4299,22 @@ multiple_insn_refs_p (int regno)
       nrefs++;
     }
   return false;
+}
+
+/* Mark insns starting with FIRST as postponed for processing their
+   constraints.  See comments for lra_postponed_insns.  */
+static void
+postpone_insns (rtx_insn *first)
+{
+  for (auto insn = first; insn != NULL_RTX; insn = NEXT_INSN (insn))
+    {
+      bitmap_set_bit (&lra_postponed_insns, INSN_UID (insn));
+      if (lra_dump_file != NULL)
+	{
+	  fprintf (lra_dump_file, "    Postponing constraint processing: ");
+	  dump_insn_slim (lra_dump_file, insn);
+	}
+    }
 }
 
 /* Main entry point of the constraint code: search the body of the
@@ -4383,7 +4415,13 @@ curr_insn_transform (bool check_only_p)
 	subst = get_equiv_with_elimination (old, curr_insn);
 	original_subreg_reg_mode[i] = VOIDmode;
 	equiv_substition_p[i] = false;
-	if (subst != old)
+
+	if (subst != old
+	    /* We don't want to change an out operand by constant or invariant
+	       which will require additional reloads, e.g. by putting a constant
+	       into memory.  */
+	    && (curr_static_id->operand[i].type == OP_IN || MEM_P (subst)
+		|| (GET_CODE (subst) == SUBREG && MEM_P (SUBREG_REG (subst)))))
 	  {
 	    equiv_substition_p[i] = true;
 	    rtx new_subst = copy_rtx (subst);
@@ -4416,7 +4454,14 @@ curr_insn_transform (bool check_only_p)
 	  }
       }
 
-  /* Reload address registers and displacements.  We do it before
+  /* We process equivalences before ignoring postponed insns on the current
+     constraint sub-pass but before any reload insn generation for the
+     postponed insn.  */
+  if (! check_only_p
+      && bitmap_bit_p (&lra_postponed_insns, INSN_UID (curr_insn)))
+    return true;
+
+   /* Reload address registers and displacements.  We do it before
      finding an alternative because of memory constraints.  */
   before = after = NULL;
   for (i = 0; i < n_operands; i++)
@@ -4940,6 +4985,8 @@ curr_insn_transform (bool check_only_p)
 	      && find_reg_note (curr_insn, REG_UNUSED, old) == NULL_RTX
 	      /* OLD can be an equivalent constant here.  */
 	      && !CONSTANT_P (old)
+	      /* No need to write back anything for a scratch.  */
+	      && GET_CODE (old) != SCRATCH
 	      && (!REG_P(old) || !ira_former_scratch_p (REGNO (old))))
 	    {
 	      start_sequence ();
@@ -5082,7 +5129,16 @@ curr_insn_transform (bool check_only_p)
 	  const_insn = prev;
 	}
     }
-  lra_process_new_insns (curr_insn, before, after, "Inserting insn reload");
+  if (asm_noperands (PATTERN (curr_insn)) >= 0)
+    {
+      /* Asm can have a lot of operands.  To guarantee their assignment,
+	 postpone processing the reload insns until the reload pseudos are
+	 assigned.  */
+      postpone_insns (before);
+      postpone_insns (after);
+    }
+  lra_process_new_insns (curr_insn, before, after,
+			 "Inserting insn reload", true);
   if (const_regno >= 0) {
     bool move_p = true;
     for (rtx_insn *insn = before; insn != curr_insn; insn = NEXT_INSN (insn))

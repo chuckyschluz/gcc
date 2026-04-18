@@ -37,6 +37,10 @@
 #define builtin_define(TXT) cpp_define (pfile, TXT)
 #define builtin_assert(TXT) cpp_assert (pfile, TXT)
 
+/* Not on Windows ABI unless explicitly set.  */
+#ifndef TARGET_AARCH64_MS_ABI
+#define TARGET_AARCH64_MS_ABI 0
+#endif
 
 static void
 aarch64_def_or_undef (bool def_p, const char *macro, cpp_reader *pfile)
@@ -73,7 +77,6 @@ aarch64_define_unconditional_macros (cpp_reader *pfile)
   builtin_define ("__ARM_FEATURE_CLZ");
   builtin_define ("__ARM_FEATURE_IDIV");
   builtin_define ("__ARM_FEATURE_UNALIGNED");
-  builtin_define ("__ARM_PCS_AAPCS64");
   builtin_define_with_int_value ("__ARM_SIZEOF_WCHAR_T", WCHAR_TYPE_SIZE / 8);
 
   builtin_define ("__GCC_ASM_FLAG_OUTPUTS__");
@@ -147,6 +150,7 @@ aarch64_update_cpp_builtins (cpp_reader *pfile)
 
   aarch64_def_or_undef (TARGET_FLOAT, "__ARM_FEATURE_FMA", pfile);
 
+  aarch64_def_or_undef (!TARGET_AARCH64_MS_ABI, "__ARM_PCS_AAPCS64", pfile);
   if (TARGET_FLOAT)
     {
       builtin_define_with_int_value ("__ARM_FP", 0x0E);
@@ -196,7 +200,7 @@ aarch64_update_cpp_builtins (cpp_reader *pfile)
 
   aarch64_def_or_undef (TARGET_AES && TARGET_SHA2, "__ARM_FEATURE_CRYPTO", pfile);
   aarch64_def_or_undef (TARGET_SIMD_RDMA, "__ARM_FEATURE_QRDMX", pfile);
-  aarch64_def_or_undef (TARGET_SVE, "__ARM_FEATURE_SVE", pfile);
+  aarch64_def_or_undef (AARCH64_HAVE_ISA (SVE), "__ARM_FEATURE_SVE", pfile);
   cpp_undef (pfile, "__ARM_FEATURE_SVE_BITS");
   cpp_undef (pfile, "__ARM_FEATURE_SVE_VECTOR_OPERATORS");
   cpp_undef (pfile, "__ARM_FEATURE_SVE_PREDICATE_OPERATORS");
@@ -221,9 +225,9 @@ aarch64_update_cpp_builtins (cpp_reader *pfile)
   aarch64_def_or_undef (TARGET_SVE_F64MM,
 			"__ARM_FEATURE_SVE_MATMUL_FP64", pfile);
   aarch64_def_or_undef (AARCH64_HAVE_ISA (SVE_B16B16)
-			&& (TARGET_SVE2 || TARGET_SME2),
+			&& (AARCH64_HAVE_ISA (SVE2) || TARGET_SME2),
 			"__ARM_FEATURE_SVE_B16B16", pfile);
-  aarch64_def_or_undef (TARGET_SVE2, "__ARM_FEATURE_SVE2", pfile);
+  aarch64_def_or_undef (AARCH64_HAVE_ISA (SVE2), "__ARM_FEATURE_SVE2", pfile);
   aarch64_def_or_undef (TARGET_SVE2_AES, "__ARM_FEATURE_SVE2_AES", pfile);
   aarch64_def_or_undef (TARGET_SVE2_BITPERM,
 			"__ARM_FEATURE_SVE2_BITPERM", pfile);

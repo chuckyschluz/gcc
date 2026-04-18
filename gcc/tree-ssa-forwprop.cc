@@ -1366,6 +1366,10 @@ optimize_aggr_zeroprop (gimple *stmt, bool full_walk)
       || !poly_int_tree_p (len))
     return;
 
+  /* Sometimes memset can have no vdef due to invalid declaration of memset (const, etc.).  */
+  if (!gimple_vdef (stmt))
+    return;
+
   /* This store needs to be on the byte boundary and pointing to an object.  */
   poly_int64 offset;
   tree dest_base = get_addr_base_and_unit_offset (dest, &offset);
@@ -4080,7 +4084,7 @@ simplify_vector_constructor (gimple_stmt_iterator *gsi)
 		  == TYPE_PRECISION (TREE_TYPE (type)))
 	      && orig_elem_type[0]
 	      && useless_type_conversion_p (orig_elem_type[0],
-					    TREE_TYPE (type))
+					    TREE_TYPE (TREE_TYPE (orig[0])))
 	      && mode_for_vector (as_a <scalar_mode>
 				  (TYPE_MODE (TREE_TYPE (TREE_TYPE (orig[0])))),
 				  nelts * 2).exists ()
@@ -4122,7 +4126,7 @@ simplify_vector_constructor (gimple_stmt_iterator *gsi)
 		       == 2 * TYPE_PRECISION (TREE_TYPE (type)))
 		   && orig_elem_type[0]
 		   && useless_type_conversion_p (orig_elem_type[0],
-						 TREE_TYPE (type))
+						 TREE_TYPE (TREE_TYPE (orig[0])))
 		   && mode_for_vector (as_a <scalar_mode>
 				         (TYPE_MODE
 					   (TREE_TYPE (TREE_TYPE (orig[0])))),

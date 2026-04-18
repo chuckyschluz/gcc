@@ -76,7 +76,7 @@ Enable only function reordering with auto-profile.
 
 -param=cycle-accurate-model=
 Common Joined UInteger Var(param_cycle_accurate_model) Init(1) IntegerRange(0, 1) Param Optimization
-Whether the scheduling description is mostly a cycle-accurate model of the target processor and is likely to be spill aggressively to fill any pipeline bubbles.
+Whether the scheduling description is mostly a cycle-accurate model of the target processor and is likely to spill aggressively to fill any pipeline bubbles.
 
 -param=hwasan-instrument-stack=
 Common Joined UInteger Var(param_hwasan_instrument_stack) Init(1) IntegerRange(0, 1) Param Optimization
@@ -588,7 +588,7 @@ Maximum number of active local stores in RTL dead store elimination.
 
 -param=max-devirt-targets=
 Common Joined UInteger Var(param_max_devirt_targets) Init(3) Param Optimization
-Maximum number of targets to devirutalize.
+Maximum number of targets to devirtualize.
 
 -param=max-early-inliner-iterations=
 Common Joined UInteger Var(param_early_inliner_max_iterations) Init(1) Param Optimization
@@ -944,7 +944,7 @@ Maximum probability of the entry BB of split region (as a percentage relative to
 
 -param=phiopt-factor-max-stmts-live=
 Common Joined UInteger Var(param_phiopt_factor_max_stmts_live) Init(5) Optimization IntegerRange(0, 100) Param
-Maximum number of statements allowed inbetween the statement and the end to considered not extending the liferange.
+Maximum number of statements allowed between a defining statement and the end of the basic block before extending the live range is considered profitable.
 
 -param=predictable-branch-outcome=
 Common Joined UInteger Var(param_predictable_branch_outcome) Init(2) IntegerRange(0, 50) Param Optimization
@@ -1295,9 +1295,9 @@ The maximum factor which the loop vectorizer applies to the cost of statements i
 Common Joined UInteger Var(param_vect_induction_float) Init(1) IntegerRange(0, 1) Param Optimization
 Enable loop vectorization of floating point inductions.
 
--param=vect-scalar-cost-multiplier=
-Common Joined UInteger Var(param_vect_scalar_cost_multiplier) Init(100) IntegerRange(0, 10000) Param Optimization
-The scaling multiplier as a percentage to apply to all scalar loop costing when performing vectorization profitability analysis.  The default value is 100.
+-param=vect_allow_possibly_not_worthwhile_vectorizations=
+Common Joined UInteger Var(param_vect_allow_possibly_not_worthwhile_vectorizations) Init(0) IntegerRange(0, 1) Param Optimization
+Enable vectorization of loops that may not be profitable according to the cost model but still perform costing between vector modes.
 
 -param=vrp-block-limit=
 Common Joined UInteger Var(param_vrp_block_limit) Init(150000) Optimization Param

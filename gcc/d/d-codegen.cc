@@ -2349,7 +2349,8 @@ d_build_call (TypeFunction *tf, tree callable, tree object,
 		 - The ABI of the function expects the callee to destroy its
 		 arguments; when the caller is handles destruction, then `targ'
 		 has already been made into a temporary. */
-	      if (!can_elide_copy_p (arg)
+	      if (TREE_CODE (targ) != TARGET_EXPR
+		  && !can_elide_copy_p (arg)
 		  && (arg->op == EXP::structLiteral
 		      || (!sd->postblit && !sd->dtor)
 		      || target.isCalleeDestroyingArgs (tf)))
@@ -2753,7 +2754,7 @@ build_vthis (AggregateDeclaration *decl)
 	{
 	  tree ffo = get_frameinfo (fdo);
 	  if (FRAMEINFO_CREATES_FRAME (ffo) || FRAMEINFO_STATIC_CHAIN (ffo)
-	      || fdo->hasNestedFrameRefs ())
+	      || dmd::hasNestedFrameRefs (fdo))
 	    vthis_value = get_frame_for_symbol (decl);
 	  else if (cd != NULL)
 	    {
@@ -2997,7 +2998,7 @@ get_frameinfo (FuncDeclaration *fd)
       FRAMEINFO_CREATES_FRAME (ffi) = 1;
       FRAMEINFO_IS_CLOSURE (ffi) = 1;
     }
-  else if (fd->hasNestedFrameRefs ())
+  else if (dmd::hasNestedFrameRefs (fd))
     {
       /* Functions with nested refs must create a static frame for local
 	 variables to be referenced from.  */

@@ -13016,11 +13016,12 @@ corresponding bound is static.
 
 @geindex Max_Tasks
 
-[RM D.7] Specifies the maximum number of task that may be created, not
+[RM D.7] Specifies the maximum number of tasks that may be created, not
 counting the creation of the environment task.  Violations of this
-restriction with a value of zero are detected at compile
-time. Violations of this restriction with values other than zero cause
-Storage_Error to be raised.
+restriction with a value of zero are detected at compile time in all
+contexts.  Violations of this restriction with a value greater than
+zero are detected for library-level tasks at compile time, but are
+not detected for local tasks at all.
 
 @node No_Abort_Statements,No_Access_Parameter_Allocators,Max_Tasks,Partition-Wide Restrictions
 @anchor{gnat_rm/standard_and_implementation_defined_restrictions no-abort-statements}@anchor{1dd}
@@ -29744,7 +29745,7 @@ RM references: 8.05.01 (2/3) 8.05.01 (3/2)
 @itemize *
 
 @item 
-`AI12-0277 The meaning of “accessibility level of the body of F” (0000-00-00)'
+`AI12-0277 The meaning of “accessibility level of the body of F” (2020-09-09)'
 
 Clarify that the only time that an explicitly aliased formal parameter has different accessibility properties than an aliased part of a “normal” parameter is for the accessibility checking associated with a return statement.
 
@@ -30225,7 +30226,7 @@ RM references: 6.05 (5.12/5) 6.05 (8/4) 6.05 (8.1/3) 6.05 (21/3)
 @itemize *
 
 @item 
-`AI12-0345 Dynamic accessibility of explicitly aliased parameters (0000-00-00)'
+`AI12-0345 Dynamic accessibility of explicitly aliased parameters (2020-09-09)'
 
 Further clarify (after AI12-0277) accessibility rules for explicitly aliased parameters.
 
@@ -30375,7 +30376,7 @@ RM references: D.07 (1.3/5) D.07 (10.12/5)
 @itemize *
 
 @item 
-`AI12-0372 Static accessibility of “master of the call” (0000-00-00)'
+`AI12-0372 Static accessibility of “master of the call” (2020-09-09)'
 
 Add an extra compile-time accessibility check for explicitly aliased parameters needed to prevent dangling references.
 
@@ -30617,6 +30618,21 @@ Ada 2022 AI12-0401 restricts renaming of a qualified expression to cases where
 the operand is a constant, or the target subtype statically matches the nominal subtype of the operand, or is unconstrained with no predicates, to prevent setting variables to values outside their range or constraints.
 
 RM references: 3.03 (23.2/3) 8.05.01 (4.7/5) 8.05.01 (5/3)
+@end itemize
+
+@geindex AI12-0402 (Ada 2022 feature)
+
+
+@itemize *
+
+@item
+`AI12-0402 Master of a function call with elementary result type (2026-01-07)'
+
+This AI restricts the rule that makes the master of a function call, which
+is used to directly initialize part of an object, that of the object being
+initialized, to the case where the result type of the function is composite.
+
+RM references: 3.10.2 (10.2/5)
 @end itemize
 
 @geindex AI12-0409 (Ada 2022 feature)
@@ -32998,9 +33014,16 @@ The generic unit shall not take a generic formal object of mode @code{in out}.
 If the generic unit takes a generic formal object of mode @code{in}, then the
 corresponding generic actual parameter shall be a static expression.
 
-A @code{structural_generic_instance_name} shall not be present in a library
-unit if the structural instance is also a library unit and has a semantic
-dependence on the former.
+A @code{structural_generic_instance_name} for a generic package shall not be
+present in a library unit if the structural instance is also a library unit
+and has a semantic dependence on the former.
+
+For a generic subprogram, if a local entity of the enclosing library-level
+package is used as an actual and the structural instance would have a semantic
+dependence on the package, the structural instantiation is automatically
+demoted to a local instantiation. In this case, several instances of the
+generic subprogram may be present in a single partition, unless
+whole-partition optimization is performed (e.g., via LTO).
 
 @node Static Semantics,,Legality Rules<3>,Structural Generic Instantiation
 @anchor{gnat_rm/gnat_language_extensions static-semantics}@anchor{47d}
@@ -33009,7 +33032,10 @@ dependence on the former.
 
 A @code{structural_generic_instance_name} denotes the instance that is the
 product of the structural instantiation of a generic unit on the specified
-actual parameters. This instance is unique to a partition.
+actual parameters. This instance is unique to a partition, except when a
+generic subprogram instantiation is automatically demoted to a local
+instantiation as described under Legality Rules.
+
 
 Example:
 
@@ -33047,9 +33073,10 @@ package Q is
 end Q;
 @end example
 
-The reason is that @code{Ada.Containers.Vectors}, @code{Positive} and @code{Q.T} being
-library-level entities, the structural instance @code{Ada.Containers.Vectors(Positive,T)} is a library unit with a dependence
-on @code{Q} and, therefore, cannot be referenced from within @code{Q}. The simple
+The reason is that @code{Ada.Containers.Vectors}, @code{Positive} and @code{Q.T}
+being library-level entities, the structural instance @code{Ada.Containers.Vectors(Positive,T)} is a library unit with a dependence
+on @code{Q} and, therefore, cannot be referenced from within @code{Q}. This
+restriction applies to structural instantiations of generic packages. The simple
 way out is to declare a traditional instantiation in this case:
 
 @example
@@ -33082,6 +33109,35 @@ end;
 
 because the structural instance @code{Ada.Containers.Vectors(Positive,T)} is
 not a library unit.
+
+For generic subprograms, the restriction does not apply: if a local entity of
+a library-level package is used as an actual, the structural instantiation is
+automatically demoted to a local instantiation. For example:
+
+@example
+with Ada.Unchecked_Deallocation;
+
+package Q is
+   type T is record
+      I : Integer;
+   end record;
+
+   type T_Access is access T;
+end Q;
+
+package body Q is
+   procedure Free_T (X : in out T_Access) is
+   begin
+      Ada.Unchecked_Deallocation(T, T_Access)(X);
+   end Free_T;
+end Q;
+@end example
+
+is legal: since @code{T} and @code{T_Access} are local entities of @code{Q},
+the structural instantiation of @code{Ada.Unchecked_Deallocation} is demoted
+to a local instantiation rather than producing an error. Note that the
+uniqueness guarantee no longer holds in this case and several instances of
+the generic subprogram may be present in a single partition.
 
 The first example can be rewritten in a less verbose manner:
 

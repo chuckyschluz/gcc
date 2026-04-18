@@ -1544,7 +1544,7 @@ initialize_node_lattices (struct cgraph_node *node)
    propagated to a parameter of type PARAM_TYPE, or return a fold-converted
    VALUE to PARAM_TYPE if that is possible.  Return NULL_TREE otherwise.  */
 
-static tree
+tree
 ipacp_value_safe_for_type (tree param_type, tree value)
 {
   if (!value)
@@ -4454,14 +4454,13 @@ adjust_callers_for_value_intersection (vec<cgraph_edge *> &callers,
    is assumed their number is known and equal to CALLER_COUNT.  */
 
 template <typename valtype>
-static vec<cgraph_edge *>
+static auto_vec<cgraph_edge *>
 gather_edges_for_value (ipcp_value<valtype> *val, cgraph_node *dest,
 			int caller_count)
 {
   ipcp_value_source<valtype> *src;
-  vec<cgraph_edge *> ret;
+  auto_vec<cgraph_edge *> ret (caller_count);
 
-  ret.create (caller_count);
   for (src = val->sources; src; src = src->next)
     {
       struct cgraph_edge *cs = src->cs;
@@ -5259,11 +5258,30 @@ self_recursive_pass_through_p (cgraph_edge *cs, ipa_jump_func *jfunc, int i,
 			       bool simple = true)
 {
   enum availability availability;
-  if (cs->caller == cs->callee->function_symbol (&availability)
+  if (jfunc->type == IPA_JF_PASS_THROUGH
+      && cs->caller == cs->callee->function_symbol (&availability)
       && availability > AVAIL_INTERPOSABLE
-      && jfunc->type == IPA_JF_PASS_THROUGH
       && (!simple || ipa_get_jf_pass_through_operation (jfunc) == NOP_EXPR)
       && ipa_get_jf_pass_through_formal_id (jfunc) == i
+      && ipa_node_params_sum->get (cs->caller)
+      && !ipa_node_params_sum->get (cs->caller)->ipcp_orig_node)
+    return true;
+  return false;
+}
+
+/* Return true if JFUNC, which describes the i-th parameter of call CS, is an
+   ancestor function with zero offset to itself when the cgraph_node involved
+   is not an IPA-CP clone.  */
+
+static bool
+self_recursive_ancestor_p (cgraph_edge *cs, ipa_jump_func *jfunc, int i)
+{
+  enum availability availability;
+  if (jfunc->type == IPA_JF_ANCESTOR
+      && cs->caller == cs->callee->function_symbol (&availability)
+      && availability > AVAIL_INTERPOSABLE
+      && ipa_get_jf_ancestor_offset (jfunc) == 0
+      && ipa_get_jf_ancestor_formal_id (jfunc) == i
       && ipa_node_params_sum->get (cs->caller)
       && !ipa_node_params_sum->get (cs->caller)->ipcp_orig_node)
     return true;
@@ -5361,6 +5379,8 @@ find_scalar_values_for_callers_subset (vec<tree> &known_csts,
 				op_type);
 	      t = ipacp_value_safe_for_type (type, t);
 	    }
+	  else if (self_recursive_ancestor_p (cs, jump_func, i))
+	    continue;
 	  else
 	    t = ipa_value_from_jfunc (ipa_node_params_sum->get (cs->caller),
 				      jump_func, type);
@@ -5515,7 +5535,8 @@ push_agg_values_for_index_from_edge (struct cgraph_edge *cs, int index,
 	      && !src_plats->aggs_bottom
 	      && (agg_jf_preserved || !src_plats->aggs_by_ref))
 	    {
-	      if (interim && self_recursive_pass_through_p (cs, jfunc, index))
+	      if (interim && (self_recursive_pass_through_p (cs, jfunc, index)
+			      || self_recursive_ancestor_p (cs, jfunc, index)))
 		{
 		  interim->push_adjusted_values (src_idx, index, unit_delta,
 						 res);
@@ -5898,10 +5919,19 @@ ipcp_val_replacement_ok_p (vec<tree> &,
 			   int index, HOST_WIDE_INT offset,
 			   ipa_polymorphic_call_context value)
 {
-  if (offset != -1)
+  if (offset != -1
+      || known_contexts.length () <= (unsigned) index
+      || known_contexts[index].useless_p ())
     return false;
-  return (!known_contexts[index].useless_p ()
-	  && known_contexts[index].equal_to (value));
+
+  if (known_contexts[index].equal_to (value))
+    return true;
+
+  /* In some corner cases, the final gathering of contexts can figure out that
+     the available context is actually more precise than what we wanted to
+     clone for.  Allow it.  */
+  value.combine_with (known_contexts[index]);
+  return known_contexts[index].equal_to (value);
 }
 
 /* Decide whether to create a special version of NODE for value VAL of
@@ -5974,8 +6004,8 @@ decide_about_value (struct cgraph_node *node, int index, HOST_WIDE_INT offset,
       fprintf (dump_file, " (caller_count: %i)\n", caller_count);
     }
 
-  vec<cgraph_edge *> callers;
-  callers = gather_edges_for_value (val, node, caller_count);
+  auto_vec<cgraph_edge *> callers
+    = gather_edges_for_value (val, node, caller_count);
   ipa_node_params *info = ipa_node_params_sum->get (node);
   ipa_auto_call_arg_values avals;
   avals.m_known_vals.safe_grow_cleared (ipa_get_param_count (info), true);
@@ -6054,7 +6084,6 @@ decide_about_value (struct cgraph_node *node, int index, HOST_WIDE_INT offset,
   else
     update_profiling_info (node, val->spec_node);
 
-  callers.release ();
   overall_size += val->local_size_cost;
   if (dump_file && (dump_flags & TDF_DETAILS))
     fprintf (dump_file, "     overall size reached %li\n",

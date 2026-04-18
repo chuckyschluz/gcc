@@ -1,3 +1,244 @@
+2026-04-02  Robert Dubner  <rdubner@symas.com>
+
+	* cobol1.cc (cobol_langhook_handle_option): Handle OPT_Wrecording_mode.
+	* gcobol.1: Documentation of pre-program registers.
+	* genapi.cc (hijacker): Define new function hijacked code generation.
+	(RETURN_WHEN_HIJACKED): Macro for wrapping if(hijacked)return;
+	(hijacked): Either a boolean or false depending on ENABLE_HIJACKING.
+	(set_exception_environment): Use gg_pointer_to_array instead of
+	gg_get_address_of.
+	(parser_statement_end): Formatting.
+	(section_label): Change ALTER STATEMENT processing.
+	(pseudo_return_push): Expand TRACE1 message.
+	(pseudo_return_pop): Expand TRACE1 message; improved PERFORM processing.
+	(find_procedure): Change how cbl_proc_t is allocated; improved PERFORM
+	processing.
+	(parser_enter_section): Changed ALTER statement processing.
+	(parser_enter_paragraph): Likewise.
+	(parser_goto): Use SWITCH_EXPR instead of indirect jump.
+	(parser_perform): Likewise.
+	(internal_perform_through): Likewise.
+	(parser_enter_file): Use SWITCH_EXPR for implementing ENTRY statement.
+	(parser_leave_file): Build table of values for the SWITCH_EXPR.
+	(enter_program_common): Remove unused JMP *ptr.
+	(parser_enter_program): Code to hijack code generation for a function
+	"dubner" when ENABLE_HIJACKING is defined.
+	(build_dispatch_switch): Generalize builder of SWITCH_EXPR.
+	(build_alter_switch): Uses build_dispatch_switch.
+	(build_entry_switch): Likewise.
+	(build_perform_dispatcher): Likewise.
+	(parser_end_program): Wrap build_perform_dispatcher() in if(!hijacked).
+	(parser_init_list): Use RETURN_WHEN_HIJACKED; use gg_pointer_to_array()
+	instead of gg_get_address_of().
+	(psa_FldLiteralN): Set TREE_READONLY(var_decl) = 1.
+	(parser_alphabet): use gg_pointer_to_array() instead of
+	gg_get_address_of().
+	(parser_assign): Formatting.
+	(program_end_stuff): Call hijacking() when ENABLE_HIJACKING and the
+	program-id is "hijack"; use gg_pointer_to_array().
+	(parser_exit): Handle if(hijacked);
+	(register_find): New static function to find XML-* COBOL variables.
+	(parser_xml_parse): Updated XML PARSE statement handling.
+	(initialize_the_data): Use RETURN_WHEN_HIJACKED.
+	(establish_using): Change first-time-through processing.
+	(parser_division): Change ENTRY statement processing.
+	(parser_see_stop_run): Changed RETURN-CODE per-function variable
+	processing.
+	(parser_label_label): Use RETURN_WHEN_HIJACKED.
+	(parser_label_goto): Likewise.
+	(parser_perform_inline_times): Honor cbl_field_t offset for the count
+	parameter.
+	(inspect_tally): Use __gg__inspect_format_1_sbc() for SBC characters.
+	(create_and_call): Use per-function RETURN-CODE.
+	(parser_entry_activate): Eliminate static tree variables.
+	(parser_entry): Use automatic tree variables.
+	(parser_program_hierarchy): Use RETURN_WHEN_HIJACKED and
+	gg_pointer_to_array().
+	(build_temporaryN): New function compiled when ENABLE_HIJACKING.
+	(hijack_for_development): Changed to generate minimal GENERIC.
+	(actually_create_the_static_field): Use gg_structure_type_constructor
+	to create the constructor for the static cblc_field_t VAR_DECL.
+	(psa_FldLiteralA): Move where TREE attributes are established.
+	(parser_local_add): Use gg_pointer_to_array().
+	(parser_symbol_add): Use RETURN_WHEN_HIJACKED(); use gg_pointer_to_array().
+	* gengen.cc (gg_append_statement): #if 0 around some debugging code.
+	(gg_show_type): Expanded to display "static" and "readonly".
+	(gg_find_field_in_struct): Moved and rewritten.
+	(gg_get_structure_type_decl): New function.
+	(gg_start_building_a_union): Eliminated.
+	(gg_start_building_a_struct): Eliminated.
+	(gg_add_field_to_structure): Eliminated.
+	(gg_structure_type_constructor): New function.
+	(gg_get_struct_type_decl): Eliminated.
+	(gg_get_union_type_decl): Eliminated.
+	(gg_get_local_struct_type_decl): Eliminated.
+	(gg_get_filelevel_struct_type_decl): Eliminated.
+	(gg_get_filelevel_union_type_decl): Eliminated.
+	(gg_define_local_struct): Eliminated.
+	(gg_assign_to_structure): Eliminated.
+	(gg_define_array): Formatting.
+	(gg_pointer_to_array): Returns ADDR_EXPR for &array[0];
+	(gg_goto): Comment reflecting why we aren't using it.
+	* gengen.h (SHORT_P): Alias for build_pointer_type(short_integer_type_node);
+	(struct gg_function_t): Changes mostly in support of SWITCH_EXPR.
+	(gg_get_local_struct_type_decl): Eliminated declaration.
+	(gg_get_filelevel_struct_type_decl): Likewise.
+	(gg_get_filelevel_union_type_decl): Likewise.
+	(gg_define_local_struct): Likewise.
+	(gg_get_structure_type_decl): New declaration.
+	(gg_structure_type_constructor): New declaration.
+	(gg_assign_to_structure): Eliminated declaration.
+	(gg_define_uchar_star): Changed declaration.
+	(gg_pointer_to_array): New declaration.
+	* genutil.cc: Removed unused globals; added var_decl_entry_index.
+	* genutil.h: Likewise.
+	* parse.y: Change program-id and REDEFINES handling.
+	* parse_ante.h: Likewise.
+	* scan_ante.h (is_refmod): Rewrite.
+	* structs.cc (create_cblc_field_t): Use gg_get_structure_type_decl().
+	* symbols.cc (return_code_register): Use per-program COBOL registers.
+	(symbol_redefines_root): New function.
+	(symbols_update): Use per-program COBOL registers.
+	(symbol_table_init): Implement per-program registers.
+	(symbol_registers_add): Likewise.
+	(cbl_field_t::encode): Loosen COBOL level requirement.
+	* symbols.h (struct cbl_proc_t): SWITCH_EXPR-based PERFORM returns.
+	(symbol_redefines_root): New declaration.
+	(symbol_registers_add): New declaration.
+	(new_alphanumeric): New comment.
+	* util.cc (FOR_JIM): Remove some unused demonstration code.
+	(cbl_field_t::encode_numeric): Likewise.
+
+2026-03-02  Robert Dubner  <rdubner@symas.com>
+
+	PR cobol/119456
+	* genapi.cc (mh_source_is_literalA): Don't set refmod_e attribute
+	unless it is necessary.
+	(have_common_parent): Helper routine that determines whether two
+	COBOL variables are members of the same data description.
+	(mh_alpha_to_alpha): Modified for greater efficiency when table
+	subscripts and reference modification parameters are numeric
+	literals.
+	* genutil.cc (get_data_offset): Recognizes when table subscripts
+	and refmod offsets are numeric literals.
+	(refer_size): Recognizes when refmod offsets are numeric literals.
+	(refer_size_source): Recognizes when table subscripts are numeric
+	literals.
+
+2026-02-27  Richard Biener  <rguenther@suse.de>
+
+	PR cobol/123238
+	* lexio.cc: Remove <iostream> include.
+	(cdftext::process_file): Remove if (false) gated use of
+	iostream code.
+
+2026-02-26  Robert Dubner  <rdubner@symas.com>
+
+	* parse.y: BASECONVERT and TRIM take their type from their first
+	parameter.
+	* parse_util.h (intrinsic_return_field): The function_descrs[] is
+	adjusted so that a number of functions take their return type from
+	their first calling parameter.  intrinsic_return_field() has been
+	refined.
+	* symbols.cc (new_alphanumeric):  Use set_explicit() instead of
+	set() in support of refined intrinsic function return type.
+
+2026-02-24  Robert Dubner  <rdubner@symas.com>
+
+	* gcobc: Adjust how -fPIC is applied, and other refinements.
+	* gcobol.1: Documentation.
+	* genapi.cc (parser_statement_end): New function.  Deallocates
+	temp char strings from the heap.
+	(initialize_variable_internal): Ignore temp char strings.
+	(compare_binary_binary): Formatting.
+	(parser_end_program): Formatting.
+	(parser_init_list): Formatting.
+	(parser_exit_program): Formatting.
+	(program_end_stuff): Formatting.
+	(parser_exit): Formatting.
+	(parser_perform_conditional): Formatting.
+	(perform_outofline_before_until): Formatting.
+	(parser_file_add): Formatting.
+	(mh_source_is_literalA): Formatting.
+	(psa_new_var_decl): Make cblc_field_t for intermediate_e
+	alphanumerics program-static.
+	(parser_symbol_add): Eliminate unnecessary code when
+	type!=FldConditional; change handling of intermediate_e for
+	FldAlphanumerics.
+	* genapi.h (parser_end_program): New declaration.
+	(parser_exit): Formatting.
+	(parser_exit_program): Formatting.
+	(parser_statement_end): New declaration.
+	* lexio.cc (parse_replace_pairs): Change CDF handling.
+	(cdftext::lex_open): Likewise.
+	(cdftext::process_file): Likewise.
+	* parse.y: Changes to MAXIMUM_ALPHA_LENGTH; refine return value
+	types for various intrinsic functions; some CDF handling.
+	* parse_ante.h (MAXLENGTH_FORMATTED_DATE): Eliminate constant.
+	(MAXLENGTH_FORMATTED_TIME): Likewise.
+	(MAXLENGTH_CALENDAR_DATE): Likewise.
+	(MAXLENGTH_FORMATTED_DATETIME): Likewise.
+	(new_alphanumeric): No longer takes a capacity.
+	(intrinsic_return_field): New declaration.
+	(struct ffi_args_t): Changed debug message.
+	(is_among): New declaration.
+	* parse_util.h (intrinsic_return_field): New function. Works with
+	the modified function_descrs[] table.
+	* scan.l: Modified scanning.
+	* scan_ante.h (class input_file_status_t): Likewise.
+	(verify_ws):  Likewise.
+	(is_refmod): Likewise.
+	* symbols.cc (symbols_update): Improved comment about a debug
+	message.
+	(symbol_temporaries): New function for temporaries on the heap that
+	will have to be deallocated.
+	(symbol_temporary_alphanumerics): Likewise.
+	(new_temporary_impl): Eliminate MAXIMUM_ALPHA_LENGTH from template.
+	(new_alphanumeric): Eliminate capacity as a parameter.
+	* symbols.h (cbl_dialect_str): Formatting.
+	(MAXIMUM_ALPHA_LENGTH): Change comment and value.
+	(IBM_MAXIMUM_ALPHA_LENGTH): Put parentheses around "size_t(1)<<31".
+	(symbol_temporaries): New declaration.
+	(symbol_temporary_alphanumerics): New declaration.
+	(struct function_descr_t): New comment on ret_type.
+	(new_alphanumeric): New declaration.
+	* util.cc (class cdf_directives_t): CDF processing.
+	(cobol_set_indicator_column): Likewise.
+	(cdf_push_source_format): Likewise.
+	(cdf_pop_source_format): Likewise.
+	(parent_names): Likewise.
+	(cobol_filename): Likewise.
+	(cobol_lineno): Likewise.
+	(cobol_filename_restore): Likewise.
+
+2026-02-19  Robert Dubner  <rdubner@symas.com>
+
+	* genapi.cc (tree_type_from_field_type): Move static code.
+	(compare_binary_binary): Identify little-endian compares.
+	(psa_FldLiteralN): Eliminate obsolete development code; make the
+	initialized variables TREE_CONSTANT.
+	(parser_symbol_add): Adjust for modified FldLiteralN.
+	* genmath.cc (all_results_binary): Renamed. Modified for fastness.
+	(all_results_integer): Likewise.
+	(all_refers_integer): Likewise.
+	(largest_binary_term): Likewise.
+	(fast_add): Expand conditions.  Use get_binary_value_tree.
+	(fast_subtract): Likewise.
+	(fast_multiply): Expand conditions.
+	(fast_divide): Expand conditions.
+	(parser_add): Avoid fast_add when error or not-error are specified.
+	(parser_multiply): Likewise.
+	(parser_divide): Likewise.
+	(parser_subtract): Likewise.
+	* genutil.cc (tree_type_from_field): Disable; flagged for removal.
+	(get_binary_value): Use get_binary_value_tree.
+	(get_binary_value_tree): Avoid intermediate variables when possible.
+	(refer_is_clean): Formatting.
+	(is_pure_integer): Refine test for little-endian binary.
+	* genutil.h (get_binary_value_tree): New declaration.
+	(is_pure_integer): New declaration.
+	* symbols.cc (symbol_table_init): Explanatory ZEROS comment.
+
 2026-02-13  Robert Dubner  <rdubner@symas.com>
 
 	PR cobol/119455

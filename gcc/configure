@@ -632,6 +632,8 @@ ac_includes_default="\
 gt_needs=
 ac_subst_vars='LTLIBOBJS
 LIBOBJS
+AFDO_PROFILER
+PERF
 CET_HOST_FLAGS
 LD_PICFLAG
 PICFLAG
@@ -969,9 +971,11 @@ with_gxx_include_dir
 with_gxx_libcxx_include_dir
 with_cpp_install_dir
 enable_generated_files_in_srcdir
+with_gnu_ld
 with_ld
 with_demangler_in_ld
 with_dsymutil
+with_gnu_as
 with_as
 with_windres
 enable_largefile
@@ -1009,7 +1013,6 @@ with_picolibc
 with_zstd
 with_zstd_include
 with_zstd_lib
-with_gnu_ld
 enable_rpath
 with_libiconv_prefix
 with_libiconv_type
@@ -1032,7 +1035,6 @@ enable_fast_install
 enable_libtool_lock
 enable_darwin_at_rpath
 with_darwin_extra_rpath
-with_gnu_as
 enable_ld
 enable_gold
 with_plugin_ld
@@ -1868,10 +1870,12 @@ Optional Packages:
   --with-cpp-install-dir=DIR
                           install the user visible C preprocessor in DIR
                           (relative to PREFIX) as well as PREFIX/bin
+  --with-gnu-ld           arrange to work with GNU ld
   --with-ld               arrange to use the specified ld (full pathname)
   --with-demangler-in-ld  try to use demangler in GNU ld
   --with-dsymutil         arrange to use the specified dsymutil (full
                           pathname)
+  --with-gnu-as           arrange to work with GNU as
   --with-as               arrange to use the specified as (full pathname)
   --with-windres          arrange to use the specified windres (full pathname)
   --with-stack-clash-protection-guard-size=size
@@ -1919,8 +1923,6 @@ Optional Packages:
   --with-darwin-extra-rpath=[ARG]
                           Specify a runpath directory, additional to those
                           provided by the compiler
-  --with-gnu-as           arrange to work with GNU as
-  --with-gnu-ld           arrange to work with GNU ld
   --with-plugin-ld=[ARG]  specify the plugin linker
   --with-glibc-version=M.N
                           assume GCC used with glibc version M.N or later
@@ -3925,6 +3927,16 @@ fi
 # Find default linker
 # -------------------
 
+# With GNU ld
+
+# Check whether --with-gnu-ld was given.
+if test "${with_gnu_ld+set}" = set; then :
+  withval=$with_gnu_ld; gnu_ld_flag="$with_gnu_ld"
+else
+  gnu_ld_flag=
+fi
+
+
 case $target in
     *darwin*)
 	ld64_flag=yes # Darwin can only use a ld64-compatible linker.
@@ -4021,6 +4033,16 @@ fi
 # Find default assembler
 # ----------------------
 
+# With GNU as
+
+# Check whether --with-gnu-as was given.
+if test "${with_gnu_as+set}" = set; then :
+  withval=$with_gnu_as; gas_flag="$with_gnu_as"
+else
+  gas_flag=
+fi
+
+
 
 # Check whether --with-as was given.
 if test "${with_as+set}" = set; then :
@@ -4043,7 +4065,7 @@ fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking whether a default assembler was specified" >&5
 $as_echo_n "checking whether a default assembler was specified... " >&6; }
 if test x"${DEFAULT_ASSEMBLER+set}" = x"set"; then
-  if test x"$gas_flag" = x"no"; then
+  if test x"$gas_flag" != x"yes"; then
     { $as_echo "$as_me:${as_lineno-$LINENO}: result: yes ($DEFAULT_ASSEMBLER)" >&5
 $as_echo "yes ($DEFAULT_ASSEMBLER)" >&6; }
   else
@@ -21953,7 +21975,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 21956 "configure"
+#line 21978 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -22059,7 +22081,7 @@ else
   lt_dlunknown=0; lt_dlno_uscore=1; lt_dlneed_uscore=2
   lt_status=$lt_dlunknown
   cat > conftest.$ac_ext <<_LT_EOF
-#line 22062 "configure"
+#line 22084 "configure"
 #include "confdefs.h"
 
 #if HAVE_DLFCN_H
@@ -25476,18 +25498,28 @@ fi
 fi
 fi
 
-# With GNU as
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking Solaris assembler" >&5
+$as_echo_n "checking Solaris assembler... " >&6; }
+case $target in
+  *-*-solaris2*)
+    if $gcc_cv_as -V 2>&1 | grep 'Compiler Common.*SunOS' > /dev/null; then
+      solaris_as=yes
+      gas=no
+    elif $gcc_cv_as --version 2>/dev/null | grep GNU > /dev/null; then
+      gas=yes
+    fi
+    ;;
+  *)
+    solaris_as=no
+    ;;
+esac
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $solaris_as" >&5
+$as_echo "$solaris_as" >&6; }
+solaris_as_bool=`if test $solaris_as = yes; then echo 1; else echo 0; fi`
 
-# Check whether --with-gnu-as was given.
-if test "${with_gnu_as+set}" = set; then :
-  withval=$with_gnu_as; gas_flag="$with_gnu_as"
-else
-  if $gcc_cv_as --version 2>/dev/null | grep GNU > /dev/null; then
-   gas_flag=yes
- else
-   gas_flag=no
-fi
-fi
+cat >>confdefs.h <<_ACEOF
+#define HAVE_SOLARIS_AS $solaris_as_bool
+_ACEOF
 
 
 ORIGINAL_AS_FOR_TARGET=$gcc_cv_as
@@ -25497,6 +25529,15 @@ case "$ORIGINAL_AS_FOR_TARGET" in
   *) ac_config_files="$ac_config_files as:exec-tool.in"
  ;;
 esac
+
+# Check if we are using GNU as if not already set.
+if test -z "$gas"; then
+  if $gcc_cv_as --version 2>/dev/null | grep GNU > /dev/null; then
+    gas=yes
+  else
+    gas=no
+  fi
+fi
 
 if $gcc_cv_as --help 2>&1 | grep -- --fatal-warnings > /dev/null; then
   fw_as_opt=--fatal-warnings
@@ -25611,18 +25652,28 @@ fi
 fi
 fi
 
-# With GNU ld
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking Solaris linker" >&5
+$as_echo_n "checking Solaris linker... " >&6; }
+case $target in
+  *-*-solaris2*)
+    if $gcc_cv_ld -V 2>/dev/null | grep 'Solaris Link Editors' > /dev/null; then
+      gnu_ld=no
+      solaris_ld=yes
+    elif $gcc_cv_ld --version 2>/dev/null | grep GNU > /dev/null; then
+      gnu_ld=yes
+    fi
+    ;;
+  *)
+    solaris_ld=no
+    ;;
+esac
+{ $as_echo "$as_me:${as_lineno-$LINENO}: result: $solaris_ld" >&5
+$as_echo "$solaris_ld" >&6; }
+solaris_ld_bool=`if test $solaris_ld = yes; then echo 1; else echo 0; fi`
 
-# Check whether --with-gnu-ld was given.
-if test "${with_gnu_ld+set}" = set; then :
-  withval=$with_gnu_ld; gnu_ld_flag="$with_gnu_ld"
-else
-  if $gcc_cv_ld --version 2>/dev/null | grep GNU > /dev/null; then
-   gnu_ld_flag=yes
- else
-   gnu_ld_flag=no
- fi
-fi
+cat >>confdefs.h <<_ACEOF
+#define HAVE_SOLARIS_LD $solaris_ld_bool
+_ACEOF
 
 
 ORIGINAL_PLUGIN_LD_FOR_TARGET=$gcc_cv_ld
@@ -25649,7 +25700,16 @@ cat >>confdefs.h <<_ACEOF
 _ACEOF
 
 
-case "$target:$gnu_ld_flag" in
+# Check if we are using GNU ld if not already set.
+if test -z "$gnu_ld"; then
+  if $gcc_cv_ld --version 2>/dev/null | grep GNU > /dev/null; then
+    gnu_ld=yes
+  else
+    gnu_ld=no
+  fi
+fi
+
+case "$target:$gnu_ld" in
   *-*-solaris2*:no)
     # While Solaris ld has -m32/-m64 it usually determines the ELF class
     # from the input objects.
@@ -26153,7 +26213,7 @@ $as_echo_n "checking assembler flags... " >&6; }
 if ${gcc_cv_as_flags+:} false; then :
   $as_echo_n "(cached) " >&6
 else
-   case "$target:$gas_flag" in
+   case "$target:$gas" in
   *-*-darwin*:*)
                         case "$target" in
       i?86-*-*)
@@ -26854,7 +26914,7 @@ fi
 	    gcc_cv_initfini_array=yes
 	  fi
 	elif test x"$gcc_cv_as" != x -a x"$gcc_cv_ld" != x -a x"$gcc_cv_objdump" != x ; then
-	  case $target:$gas_flag in
+	  case $target:$gas in
 	    *:yes)
 	      sh_flags='"a"'
 	      sh_type='%progbits'
@@ -26869,7 +26929,7 @@ fi
 	      sh_quote='"'
 	      ;;
 	  esac
-	  case "$target:$gnu_ld_flag" in
+	  case "$target:$gnu_ld" in
 	    *:yes)
 	      cat > conftest.s <<EOF
 .section .dtors,$sh_flags,$sh_type
@@ -28040,7 +28100,7 @@ foo:	.long	25
 .word foo(tlsldo)'
 	;;
   i?86-*-* | x86_64-*-*)
-    case "$target:$gas_flag" in
+    case "$target:$gas" in
       i?86-*-solaris2*:no | x86_64-*-solaris2*:no)
 	tls_section_flag=t
 
@@ -28291,7 +28351,7 @@ foo:	.long	25
 	.long	foo@TPOFF'
 	;;
   sparc*-*-*)
-    case "$target:$gas_flag" in
+    case "$target:$gas" in
       sparc*-sun-solaris2.*:no)
 	conftest_s='
 	.section ".tdata",#alloc,#write,#tls'
@@ -28433,7 +28493,7 @@ elif test x$gcc_cv_ld != x; then
 	;;
       # HP-UX ld uses -a flags to select between shared and archive.
       *-*-hpux*)
-	if test x"$gnu_ld_flag" = xno; then
+	if test x"$gnu_ld" = xno; then
 	  gcc_cv_ld_static_dynamic=yes
 	  gcc_cv_ld_static_option="-aarchive_shared"
 	  gcc_cv_ld_dynamic_option="-adefault"
@@ -28468,7 +28528,7 @@ $as_echo "$gcc_cv_ld_static_dynamic" >&6; }
 $as_echo_n "checking linker --version-script option... " >&6; }
 gcc_cv_ld_version_script=no
 ld_version_script_option=''
-if test $in_tree_ld = yes || test x"$gnu_ld_flag" = xyes; then
+if test $in_tree_ld = yes || test x"$gnu_ld" = xyes; then
   gcc_cv_ld_version_script=yes
   ld_version_script_option='--version-script'
 elif test x$gcc_cv_ld != x; then
@@ -28490,7 +28550,7 @@ $as_echo "$gcc_cv_ld_version_script" >&6; }
 { $as_echo "$as_me:${as_lineno-$LINENO}: checking linker soname option" >&5
 $as_echo_n "checking linker soname option... " >&6; }
 gcc_cv_ld_soname=no
-if test $in_tree_ld = yes || test x"$gnu_ld_flag" = xyes; then
+if test $in_tree_ld = yes || test x"$gnu_ld" = xyes; then
   gcc_cv_ld_soname=yes
   ld_soname_option='-soname'
 elif test x$gcc_cv_ld != x; then
@@ -28520,7 +28580,7 @@ $as_echo_n "checking linker --demangle support... " >&6; }
     if test "$gcc_cv_gld_major_version" -eq 2 -a "$gcc_cv_gld_minor_version" -ge 14 -o "$gcc_cv_gld_major_version" -gt 2; then \
       gcc_cv_ld_demangle=yes
     fi
-  elif test x$gcc_cv_ld != x -a x"$gnu_ld_flag" = xyes; then
+  elif test x$gcc_cv_ld != x -a x"$gnu_ld" = xyes; then
     # Check if the GNU linker supports --demangle option
     if $gcc_cv_ld --help 2>&1 | grep no-demangle > /dev/null; then
       gcc_cv_ld_demangle=yes
@@ -31711,7 +31771,7 @@ esac
 
 case "$target" in
   mips*-*-* | loongarch*-*-* | *-*-hpux* )
-    if test x$gas_flag = xyes \
+    if test x$gas = xyes \
        || test x"$host" != x"$build" \
        || test ! -x "$gcc_cv_as" \
        || "$gcc_cv_as" -v < /dev/null 2>&1 | grep GNU > /dev/null; then
@@ -32926,7 +32986,7 @@ gcc_cv_ld_ctf=no
 # Check for Solaris ld 1.3315 introduced in Solaris 11.4 SRU 84.  ld -z ctf
 # already went in in SRU 81, but lacked GNU CTF to Solaris CTF conversion.
 if $gcc_cv_ld --help 2>&1 | grep -- '-z ctf' > /dev/null \
-  && test x$gnu_ld_flag = xno && test "$ld_vers_minor" -ge 3315; then
+  && test x$gnu_ld = xno && test "$ld_vers_minor" -ge 3315; then
   gcc_cv_ld_ctf=yes
 
 $as_echo "#define HAVE_LD_CTF 1" >>confdefs.h
@@ -33209,7 +33269,7 @@ elif test x$gcc_cv_ld != x; then
       gcc_cv_ld_no_as_needed_option='--pop-state'
     fi
   fi
-  case "$target:$gnu_ld_flag" in
+  case "$target:$gnu_ld" in
     *-*-solaris2*:no)
       # Solaris 2 ld always supports -z ignore/-z record.  Prefer the native
       # forms.
@@ -33220,15 +33280,6 @@ elif test x$gcc_cv_ld != x; then
       ;;
   esac
 fi
-case "$target" in
-  i?86-*-solaris2* | x86_64-*-solaris2*)
-    if echo "$ld_ver" | grep GNU > /dev/null; then
-      # Doesn't work with gld on Solaris/x86 due to PR ld/12320.
-      gcc_cv_ld_as_needed=no
-      gcc_cv_ld_use_as_needed_ldscript=no
-    fi
-    ;;
-esac
 
 fi
 { $as_echo "$as_me:${as_lineno-$LINENO}: result: $gcc_cv_ld_as_needed" >&5
@@ -35204,6 +35255,72 @@ gif=`if test x$enable_x86_64_mfentry = xyes; then echo 1; else echo 0; fi`
 cat >>confdefs.h <<_ACEOF
 #define ENABLE_X86_64_MFENTRY $gif
 _ACEOF
+
+
+# Extract the first word of "perf", so it can be a program name with args.
+set dummy perf; ac_word=$2
+{ $as_echo "$as_me:${as_lineno-$LINENO}: checking for $ac_word" >&5
+$as_echo_n "checking for $ac_word... " >&6; }
+if ${ac_cv_path_PERF+:} false; then :
+  $as_echo_n "(cached) " >&6
+else
+  case $PERF in
+  [\\/]* | ?:[\\/]*)
+  ac_cv_path_PERF="$PERF" # Let the user override the test with a path.
+  ;;
+  *)
+  as_save_IFS=$IFS; IFS=$PATH_SEPARATOR
+for as_dir in $PATH
+do
+  IFS=$as_save_IFS
+  test -z "$as_dir" && as_dir=.
+    for ac_exec_ext in '' $ac_executable_extensions; do
+  if as_fn_executable_p "$as_dir/$ac_word$ac_exec_ext"; then
+    ac_cv_path_PERF="$as_dir/$ac_word$ac_exec_ext"
+    $as_echo "$as_me:${as_lineno-$LINENO}: found $as_dir/$ac_word$ac_exec_ext" >&5
+    break 2
+  fi
+done
+  done
+IFS=$as_save_IFS
+
+  test -z "$ac_cv_path_PERF" && ac_cv_path_PERF="no"
+  ;;
+esac
+fi
+PERF=$ac_cv_path_PERF
+if test -n "$PERF"; then
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: $PERF" >&5
+$as_echo "$PERF" >&6; }
+else
+  { $as_echo "$as_me:${as_lineno-$LINENO}: result: no" >&5
+$as_echo "no" >&6; }
+fi
+
+
+AFDO_PROFILER=perf
+if test x$PERF != xno; then
+  case "$cpu_type" in
+    aarch64)
+      { $as_echo "$as_me:${as_lineno-$LINENO}: checking AArch64 build supports SPE profiling for autoprofiledbootstrap" >&5
+$as_echo_n "checking AArch64 build supports SPE profiling for autoprofiledbootstrap... " >&6; }
+      aarch64_spe_support=no
+      if test -x $PERF; then
+	# Do not use perf_spe if BRBE is supported
+	if test ! -n "$($PERF record -j any,u -o /dev/null /bin/true 2>&1 | grep "PMU Hardware or event type doesn't support branch stack sampling.")"; then
+	  AFDO_PROFILER=perf
+	  aarch64_spe_support="using BRBE instead"
+	elif test -n "$($PERF list | grep arm_spe)"; then
+	  AFDO_PROFILER=perf_spe
+	  aarch64_spe_support=yes
+	fi
+      fi
+      { $as_echo "$as_me:${as_lineno-$LINENO}: result: $aarch64_spe_support" >&5
+$as_echo "$aarch64_spe_support" >&6; }
+      ;;
+  esac
+fi
+
 
 
 # Check if the linker supports '-z now'

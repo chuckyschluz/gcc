@@ -332,6 +332,12 @@ AC_SUBST(GENINSRC)
 # Find default linker
 # -------------------
 
+# With GNU ld
+AC_ARG_WITH(gnu-ld,
+[AS_HELP_STRING([--with-gnu-ld], [arrange to work with GNU ld])],
+gnu_ld_flag="$with_gnu_ld",
+gnu_ld_flag=)
+
 case $target in
     *darwin*)
 	ld64_flag=yes # Darwin can only use a ld64-compatible linker.
@@ -405,6 +411,12 @@ fi
 # Find default assembler
 # ----------------------
 
+# With GNU as
+AC_ARG_WITH(gnu-as,
+[AS_HELP_STRING([--with-gnu-as], [arrange to work with GNU as])],
+gas_flag="$with_gnu_as",
+gas_flag=)
+
 AC_ARG_WITH(as,
 [AS_HELP_STRING([--with-as], [arrange to use the specified as (full pathname)])],
 DEFAULT_ASSEMBLER="$with_as")
@@ -420,7 +432,7 @@ fi
 
 AC_MSG_CHECKING([whether a default assembler was specified])
 if test x"${DEFAULT_ASSEMBLER+set}" = x"set"; then
-  if test x"$gas_flag" = x"no"; then
+  if test x"$gas_flag" != x"yes"; then
     AC_MSG_RESULT([yes ($DEFAULT_ASSEMBLER)])
   else
     AC_MSG_RESULT([yes ($DEFAULT_ASSEMBLER - GNU as)])
@@ -2726,15 +2738,24 @@ else
         AC_PATH_PROG(gcc_cv_as, $AS_FOR_TARGET)
 fi])
 
-# With GNU as
-AC_ARG_WITH(gnu-as,
-[AS_HELP_STRING([--with-gnu-as], [arrange to work with GNU as])],
-gas_flag="$with_gnu_as",
-[if $gcc_cv_as --version 2>/dev/null | grep GNU > /dev/null; then
-   gas_flag=yes
- else
-   gas_flag=no
-fi])
+AC_MSG_CHECKING(Solaris assembler)
+case $target in
+  *-*-solaris2*)
+    if $gcc_cv_as -V 2>&1 | grep 'Compiler Common.*SunOS' > /dev/null; then
+      solaris_as=yes
+      gas=no
+    elif $gcc_cv_as --version 2>/dev/null | grep GNU > /dev/null; then
+      gas=yes
+    fi
+    ;;
+  *)
+    solaris_as=no
+    ;;
+esac
+AC_MSG_RESULT($solaris_as)
+solaris_as_bool=`if test $solaris_as = yes; then echo 1; else echo 0; fi`
+AC_DEFINE_UNQUOTED(HAVE_SOLARIS_AS, $solaris_as_bool,
+	[Define to 1 if using the Solaris assembler.])
 
 ORIGINAL_AS_FOR_TARGET=$gcc_cv_as
 AC_SUBST(ORIGINAL_AS_FOR_TARGET)
@@ -2742,6 +2763,15 @@ case "$ORIGINAL_AS_FOR_TARGET" in
   ./as | ./as$build_exeext) ;;
   *) AC_CONFIG_FILES(as:exec-tool.in, [chmod +x as]) ;;
 esac 
+
+# Check if we are using GNU as if not already set.
+if test -z "$gas"; then
+  if $gcc_cv_as --version 2>/dev/null | grep GNU > /dev/null; then
+    gas=yes
+  else
+    gas=no
+  fi
+fi
 
 if $gcc_cv_as --help 2>&1 | grep -- --fatal-warnings > /dev/null; then
   fw_as_opt=--fatal-warnings
@@ -2809,15 +2839,24 @@ else
         AC_PATH_PROG(gcc_cv_ld, $LD_FOR_TARGET)
 fi])
 
-# With GNU ld
-AC_ARG_WITH(gnu-ld,
-[AS_HELP_STRING([--with-gnu-ld], [arrange to work with GNU ld])],
-gnu_ld_flag="$with_gnu_ld",
-[if $gcc_cv_ld --version 2>/dev/null | grep GNU > /dev/null; then
-   gnu_ld_flag=yes
- else
-   gnu_ld_flag=no
- fi])
+AC_MSG_CHECKING(Solaris linker)
+case $target in
+  *-*-solaris2*)
+    if $gcc_cv_ld -V 2>/dev/null | grep 'Solaris Link Editors' > /dev/null; then
+      gnu_ld=no
+      solaris_ld=yes
+    elif $gcc_cv_ld --version 2>/dev/null | grep GNU > /dev/null; then
+      gnu_ld=yes
+    fi
+    ;;
+  *)
+    solaris_ld=no
+    ;;
+esac
+AC_MSG_RESULT($solaris_ld)
+solaris_ld_bool=`if test $solaris_ld = yes; then echo 1; else echo 0; fi`
+AC_DEFINE_UNQUOTED(HAVE_SOLARIS_LD, $solaris_ld_bool,
+	[Define to 1 if using the Solaris linker.])
 
 ORIGINAL_PLUGIN_LD_FOR_TARGET=$gcc_cv_ld
 PLUGIN_LD_SUFFIX=`basename $gcc_cv_ld | sed -e "s,$target_alias-,,"`
@@ -2836,7 +2875,16 @@ AC_ARG_WITH(plugin-ld,
 AC_SUBST(ORIGINAL_PLUGIN_LD_FOR_TARGET)
 AC_DEFINE_UNQUOTED(PLUGIN_LD_SUFFIX, "$PLUGIN_LD_SUFFIX", [Specify plugin linker])
 
-case "$target:$gnu_ld_flag" in
+# Check if we are using GNU ld if not already set.
+if test -z "$gnu_ld"; then
+  if $gcc_cv_ld --version 2>/dev/null | grep GNU > /dev/null; then
+    gnu_ld=yes
+  else
+    gnu_ld=no
+  fi
+fi
+
+case "$target:$gnu_ld" in
   *-*-solaris2*:no)
     # While Solaris ld has -m32/-m64 it usually determines the ELF class
     # from the input objects.
@@ -3945,7 +3993,7 @@ foo:	.long	25
 .word foo(tlsldo)'
 	;;
   i?86-*-* | x86_64-*-*)
-    case "$target:$gas_flag" in
+    case "$target:$gas" in
       i?86-*-solaris2*:no | x86_64-*-solaris2*:no)
 	tls_section_flag=t
 changequote([,])dnl
@@ -4197,7 +4245,7 @@ foo:	.long	25
 	.long	foo@TPOFF'
 	;;
   sparc*-*-*)
-    case "$target:$gas_flag" in
+    case "$target:$gas" in
       sparc*-sun-solaris2.*:no)
 	conftest_s='
 	.section ".tdata",#alloc,#write,#tls'
@@ -4312,7 +4360,7 @@ elif test x$gcc_cv_ld != x; then
 	;;
       # HP-UX ld uses -a flags to select between shared and archive.
       *-*-hpux*)
-	if test x"$gnu_ld_flag" = xno; then
+	if test x"$gnu_ld" = xno; then
 	  gcc_cv_ld_static_dynamic=yes
 	  gcc_cv_ld_static_option="-aarchive_shared"
 	  gcc_cv_ld_dynamic_option="-adefault"
@@ -4338,7 +4386,7 @@ AC_MSG_RESULT($gcc_cv_ld_static_dynamic)
 AC_MSG_CHECKING(linker --version-script option)
 gcc_cv_ld_version_script=no
 ld_version_script_option=''
-if test $in_tree_ld = yes || test x"$gnu_ld_flag" = xyes; then
+if test $in_tree_ld = yes || test x"$gnu_ld" = xyes; then
   gcc_cv_ld_version_script=yes
   ld_version_script_option='--version-script'
 elif test x$gcc_cv_ld != x; then
@@ -4358,7 +4406,7 @@ AC_SUBST(ld_version_script_option)
 
 AC_MSG_CHECKING(linker soname option)
 gcc_cv_ld_soname=no
-if test $in_tree_ld = yes || test x"$gnu_ld_flag" = xyes; then
+if test $in_tree_ld = yes || test x"$gnu_ld" = xyes; then
   gcc_cv_ld_soname=yes
   ld_soname_option='-soname'
 elif test x$gcc_cv_ld != x; then
@@ -4386,7 +4434,7 @@ if test x"$demangler_in_ld" = xyes; then
     if test "$gcc_cv_gld_major_version" -eq 2 -a "$gcc_cv_gld_minor_version" -ge 14 -o "$gcc_cv_gld_major_version" -gt 2; then \
       gcc_cv_ld_demangle=yes
     fi
-  elif test x$gcc_cv_ld != x -a x"$gnu_ld_flag" = xyes; then
+  elif test x$gcc_cv_ld != x -a x"$gnu_ld" = xyes; then
     # Check if the GNU linker supports --demangle option
     if $gcc_cv_ld --help 2>&1 | grep no-demangle > /dev/null; then
       gcc_cv_ld_demangle=yes
@@ -5527,7 +5575,7 @@ esac
 
 case "$target" in
   mips*-*-* | loongarch*-*-* | *-*-hpux* )
-    if test x$gas_flag = xyes \
+    if test x$gas = xyes \
        || test x"$host" != x"$build" \
        || test ! -x "$gcc_cv_as" \
        || "$gcc_cv_as" -v < /dev/null 2>&1 | grep GNU > /dev/null; then
@@ -6299,7 +6347,7 @@ gcc_cv_ld_ctf=no
 # Check for Solaris ld 1.3315 introduced in Solaris 11.4 SRU 84.  ld -z ctf
 # already went in in SRU 81, but lacked GNU CTF to Solaris CTF conversion.
 if $gcc_cv_ld --help 2>&1 | grep -- '-z ctf' > /dev/null \
-  && test x$gnu_ld_flag = xno && test "$ld_vers_minor" -ge 3315; then
+  && test x$gnu_ld = xno && test "$ld_vers_minor" -ge 3315; then
   gcc_cv_ld_ctf=yes
   AC_DEFINE(HAVE_LD_CTF, 1, [Define if your linker supports -z ctf.])
 fi
@@ -6532,7 +6580,7 @@ elif test x$gcc_cv_ld != x; then
       gcc_cv_ld_no_as_needed_option='--pop-state'
     fi
   fi
-  case "$target:$gnu_ld_flag" in
+  case "$target:$gnu_ld" in
     *-*-solaris2*:no)
       # Solaris 2 ld always supports -z ignore/-z record.  Prefer the native
       # forms.
@@ -6543,15 +6591,6 @@ elif test x$gcc_cv_ld != x; then
       ;;
   esac
 fi
-case "$target" in
-  i?86-*-solaris2* | x86_64-*-solaris2*)
-    if echo "$ld_ver" | grep GNU > /dev/null; then
-      # Doesn't work with gld on Solaris/x86 due to PR ld/12320.
-      gcc_cv_ld_as_needed=no
-      gcc_cv_ld_use_as_needed_ldscript=no
-    fi
-    ;;
-esac
 ])
 if test x"$gcc_cv_ld_as_needed" = xyes; then
 	AC_DEFINE(HAVE_LD_AS_NEEDED, 1,
@@ -7864,6 +7903,30 @@ fi
 gif=`if test x$enable_x86_64_mfentry = xyes; then echo 1; else echo 0; fi`
 AC_DEFINE_UNQUOTED(ENABLE_X86_64_MFENTRY, $gif,
 [Define to enable -mfentry by default on x86-64.])
+
+AC_PATH_PROG(PERF, perf, no)
+AFDO_PROFILER=perf
+if test x$PERF != xno; then
+  case "$cpu_type" in
+    aarch64)
+      AC_MSG_CHECKING(AArch64 build supports SPE profiling for autoprofiledbootstrap)
+      aarch64_spe_support=no
+      if test -x $PERF; then
+	# Do not use perf_spe if BRBE is supported
+	if test ! -n "$($PERF record -j any,u -o /dev/null /bin/true 2>&1 | grep "PMU Hardware or event type doesn't support branch stack sampling.")"; then
+	  AFDO_PROFILER=perf
+	  aarch64_spe_support="using BRBE instead"
+	elif test -n "$($PERF list | grep arm_spe)"; then
+	  AFDO_PROFILER=perf_spe
+	  aarch64_spe_support=yes
+	fi
+      fi
+      AC_MSG_RESULT($aarch64_spe_support)
+      ;;
+  esac
+fi
+AC_SUBST(PERF)
+AC_SUBST(AFDO_PROFILER)
 
 # Check if the linker supports '-z now'
 ld_now_support=no

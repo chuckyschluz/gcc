@@ -6541,6 +6541,7 @@ build_compound_literal (location_t loc, tree type, tree init, bool non_const,
 
       type = TREE_TYPE (decl);
       TREE_TYPE (DECL_INITIAL (decl)) = type;
+      relayout_decl (decl);
     }
 
   if (type == error_mark_node || !COMPLETE_TYPE_P (type))
@@ -9501,6 +9502,26 @@ c_update_type_canonical (tree t)
     }
 }
 
+
+/* We set C_TYPE_VARIABLY_MODIFIED for derived types.  We will not update
+   array types, pointers to array types, function types and other derived
+   types created while the type was still incomplete.  We need to update
+   at least all types for which TYPE_CANONICAL will bet set, because for
+   those we later assume (in c_variably_modified_p) that the bit is
+   up-to-date.  */
+
+static void
+c_update_variably_modified (tree t)
+{
+  for (tree x = t; x; x = TYPE_NEXT_VARIANT (x))
+    {
+      C_TYPE_VARIABLY_MODIFIED (x) = 1;
+      for (tree p = TYPE_POINTER_TO (x); p; p = TYPE_NEXT_PTR_TO (p))
+	c_update_variably_modified (p);
+    }
+}
+
+
 /* Verify the argument of the counted_by attribute of each field of
    the containing structure, OUTMOST_STRUCT_TYPE, including its inner
    anonymous struct/union, Report error and remove the corresponding
@@ -9700,7 +9721,7 @@ finish_struct (location_t loc, tree t, tree fieldlist, tree attributes,
 	C_TYPE_VARIABLE_SIZE (t) = 1;
 
       /* If any field is variably modified, record this fact. */
-      if (C_TYPE_VARIABLY_MODIFIED (TREE_TYPE (x)))
+      if (c_type_variably_modified_p (TREE_TYPE (x)))
 	C_TYPE_VARIABLY_MODIFIED (t) = 1;
 
       if (DECL_C_BIT_FIELD (x))
@@ -9994,10 +10015,10 @@ finish_struct (location_t loc, tree t, tree fieldlist, tree attributes,
 
       tree *e = c_struct_htab->find_slot_with_hash (t, hash, INSERT);
       if (*e)
-	TYPE_CANONICAL (t) = *e;
+	TYPE_CANONICAL (t) = TYPE_CANONICAL (*e);
       else
 	{
-	  TYPE_CANONICAL (t) = t;
+	  TYPE_CANONICAL (t) = c_type_canonical (t);
 	  *e = t;
 	}
       c_update_type_canonical (t);
@@ -10030,12 +10051,16 @@ finish_struct (location_t loc, tree t, tree fieldlist, tree attributes,
 
   finish_incomplete_vars (incomplete_vars, toplevel);
 
-  /* Make sure a DECL_EXPR is created for structs with VLA members.
-     Because we do not know the context, we always pass expr
-     to force creation of a BIND_EXPR which is required in some
-     contexts.  */
+
   if (c_type_variably_modified_p (t))
-    add_decl_expr (loc, t, expr, false);
+    {
+      c_update_variably_modified (t);
+      /* Make sure a DECL_EXPR is created for structs with VLA members.
+	 Because we do not know the context, we always pass expr
+	 to force creation of a BIND_EXPR which is required in some
+	 contexts.  */
+      add_decl_expr (loc, t, expr, false);
+    }
 
   if (warn_cxx_compat)
     warn_cxx_compat_finish_struct (fieldlist, TREE_CODE (t), loc);
@@ -13064,10 +13089,10 @@ declspecs_add_type (location_t loc, struct c_declspecs *specs,
     error_at (loc, "two or more data types in declaration specifiers");
   else if (TREE_CODE (type) == TYPE_DECL)
     {
-      mark_decl_used (type, false);
       specs->type = TREE_TYPE (type);
       if (TREE_TYPE (type) != error_mark_node)
 	{
+	  mark_decl_used (type, false);
 	  specs->decl_attr = DECL_ATTRIBUTES (type);
 	  specs->typedef_p = true;
 	  specs->explicit_signed_p = C_TYPEDEF_EXPLICITLY_SIGNED (type);

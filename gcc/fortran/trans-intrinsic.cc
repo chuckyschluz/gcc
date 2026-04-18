@@ -1486,7 +1486,8 @@ conv_caf_send_to_remote (gfc_code *code)
   gfc_init_se (&rhs_se, NULL);
   if (rhs_expr->rank == 0)
     {
-      rhs_se.want_pointer = rhs_expr->ts.type == BT_CHARACTER;
+      rhs_se.want_pointer = rhs_expr->ts.type == BT_CHARACTER
+			    && rhs_expr->expr_type != EXPR_CONSTANT;
       gfc_conv_expr (&rhs_se, rhs_expr);
       gfc_add_block_to_block (&block, &rhs_se.pre);
       opt_rhs_desc = null_pointer_node;
@@ -2073,9 +2074,13 @@ conv_intrinsic_image_status (gfc_se *se, gfc_expr *expr)
 					    GFC_STAT_STOPPED_IMAGE));
     }
   else if (flag_coarray == GFC_FCOARRAY_LIB)
+    /* The team is optional and therefore needs to be a pointer to the opaque
+       pointer.  */
     tmp = build_call_expr_loc (input_location, gfor_fndecl_caf_image_status, 2,
 			       args[0],
-			       num_args < 2 ? null_pointer_node : args[1]);
+			       num_args < 2
+				 ? null_pointer_node
+				 : gfc_build_addr_expr (NULL_TREE, args[1]));
   else
     gcc_unreachable ();
 
@@ -9896,6 +9901,9 @@ conv_isocbinding_function (gfc_se *se, gfc_expr *expr)
   else if (expr->value.function.isym->id == GFC_ISYM_C_FUNLOC)
     {
       gfc_conv_expr_reference (se, arg->expr);
+      if (arg->expr->symtree->n.sym->attr.proc_pointer
+	  && arg->expr->symtree->n.sym->attr.dummy)
+	se->expr = build_fold_indirect_ref_loc (input_location, se->expr);
       /* The code below is necessary to create a reference from the calling
 	 subprogram to the argument of C_FUNLOC() in the call graph.
 	 Please see PR 117303 for more details. */
