@@ -4225,6 +4225,40 @@ expand_sdiv_pow2 (scalar_int_mode mode, rtx op0, HOST_WIDE_INT d)
 Expand unsigned division of OP0 by D using a multiplication-shift strategy in
 INT_MODE and successively wider modes. Choose the method with the lowest
 cost.
+
+The quotient OP0 / D is calculated using the magic number M and POST_SHIFT that
+correspond to the divisor D. M is at-most SIZE + 1 bits, and can be decomposed
+such that M = (MH << SIZE) + ML, where MH is 1 or 0.
+
+If the mode precision is sufficient, the quotient can be computed directly.
+1. QUOTIENT = (M * OP0) >> (SIZE + POST_SHIFT)
+This requires precision PREC such that:
+  a. Product: PREC >= WIDTH(M) + WIDTH(OP0)
+  b. Shift: PREC > SIZE + POST_SHIFT
+
+The quantity T1 := (ML * OP0) >> SIZE can be computed directly or with the
+"highpart" multiplication, which may use a synthesized widening multiplication.
+If the highpart multiplication is used, there is no explicit precision
+requirement, as that logic is delegated to 'expmed_mult_highpart'.
+
+If MH is 1, the product can be distributed to accomodate lower precision modes.
+2. QUOTIENT = (OP0 + T1) >> POST_SHIFT
+  a. Product: PREC >= WIDTH(ML) + WIDTH(OP0)
+  b. Sum: PREC > WIDTH(OP0)
+  c. Shift 1: PREC > SIZE
+  d. Shift 2: PREC > POST_SHIFT
+
+If the precision is insufficient to accomodate the intermediate addition,
+seuence 2 can be distributed further.
+3. QUOTIENT = (T1 + ((OP0 - T1) >> 1)) >> (POST_SHIFT - 1)
+  a. Product: PREC >= WIDTH(ML) + WIDTH(OP0)
+  b. Shift 1: PREC > SIZE
+  c. Shift 2: PREC > POST_SHIFT - 1
+
+Any of the above strategies can also be attempted by pre-shifting OP0 if D has
+leading zeros, which renders MH == 0. This is useful to avoid scenarios 2 and 3,
+but is otherwise counterproductive. If MH == 1 and D has leading zeros, all the
+strategies will be re-evaluated with the pre-shift sequence.
 */
 
 static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
@@ -4249,19 +4283,15 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
   int post_shift, pre_shift = 0;
   unsigned HOST_WIDE_INT mh =
       choose_multiplier(d, size, size, &ml, &post_shift);
-  /*
-  We can do better for even divisors using an initial right shift. Set
-  PRE_SHIFT to CTZ(D) and run through the loop again.
-  */
+
+  /* We can do better for even divisors using an initial right shift. */
   if (mh && (d & 1) == 0) {
     pre_shift = ctz_or_zero(d);
     mh = choose_multiplier(d, size, size - pre_shift, &ml, &post_shift);
     gcc_assert(!(mh && pre_shift));
   }
-  /*
-  Attempt the distributed multiply-highpart-shift sequence. There is no
-  explicit requirement on the precision.
-  */
+
+  /* Attempt the distributed multiply-highpart-shift sequence. */
   {
     rtx t1 = NULL_RTX, result = NULL_RTX;
     start_sequence();
@@ -4271,10 +4301,6 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
                                 NULL_RTX, 1, MAX_COST);
     }
     if (mh) {
-      /*
-      T1 + OP0 may overflow. The following identity is used:
-      (T1 + OP0) >> 1 = T1 + ((OP0 - T1) >> 1) , where OP0 >= T1
-      */
       rtx t2 = NULL_RTX, t3 = NULL_RTX, t4 = NULL_RTX;
       if (t1) {
         t2 = expand_binop(int_mode, sub_optab, op0_c, t1, NULL_RTX, 1,
@@ -4287,14 +4313,12 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
         t4 = expand_binop(int_mode, add_optab, t1, t3, NULL_RTX, 1,
                           OPTAB_DIRECT);
       }
-      if (t4) {
-        /* QUOTIENT = (T1 + ((OP0 - T1) >> 1)) >> POST_SHIFT - 1 */
+      if (t4 && prec > post_shift - 1) {
         result =
             expand_shift(RSHIFT_EXPR, int_mode, t4, post_shift - 1, target, 1);
       }
     } else {
-      if (t1) {
-        /* QUOTIENT = ((ML * OP0) >> SIZE) >> POST_SHIFT */
+      if (t1 && prec > post_shift) {
         result = expand_shift(RSHIFT_EXPR, int_mode, t1, post_shift, target, 1);
       }
     }
@@ -4306,6 +4330,7 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
 
   int ml_width = (ml == 0) ? 0 : (HOST_BITS_PER_WIDE_INT - clz_hwi(ml));
   int m_width = mh ? size + 1 : ml_width;
+  int op0_width = size - pre_shift;
 
   for (opt_scalar_int_mode mode_iter = GET_MODE_WIDER_MODE(int_mode);
        mode_iter.exists();
@@ -4315,12 +4340,9 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
     if (prec > HOST_BITS_PER_WIDE_INT) {
       break;
     }
-    /*
-    Attempt the direct multiply-shift sequence. OP0 is SIZE - PRE_SHIFT
-    bits and the multiplier is M_WIDTH bits. Therefore, the multiplication
-    requires PREC >= SIZE - PRE_SHIFT + M_WIDTH.
-    */
-    if (prec >= (size - pre_shift + m_width) && prec > (size + post_shift)) {
+
+    /* Attempt the direct multiply-shift sequence. */
+    if (prec >= (m_width + op0_width) && prec > (size + post_shift)) {
       wide_int ml_wi = wi::zext(wi::uhwi(ml, prec), size);
       wide_int mh_wi = wi::lshift(wi::uhwi(mh, prec), size);
       wide_int m_wi = wi::bit_or(mh_wi, ml_wi);
@@ -4334,7 +4356,6 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
                           OPTAB_DIRECT);
       }
       if (t1) {
-        /* QUOTIENT = (((MH << SIZE) + ML) * OP0) >> SIZE + POST_SHIFT */
         result = expand_shift(RSHIFT_EXPR, compute_mode, t1, size + post_shift,
                               NULL_RTX, 1);
       }
@@ -4347,15 +4368,9 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
       }
     }
 
-    /*
-    The following optimization applies to scenarios where MH == 1.
-    Attempt the distributed multiply-shift sequence. OP0 is SIZE bits
-    and the lower multiplier is ML_WIDTH bits. Therefore, the
-    multiplication requires PREC >= SIZE + ML_WIDTH. The sum
-    requires PREC > SIZE, which is satisfied by the previous
-    requirement.
-    */
-    if (mh && prec >= (size + ml_width) && prec > (size + post_shift)) {
+    /* Attempt the distributed multiply-shift sequence if MH == 1. */
+    if (mh && prec >= (ml_width + op0_width) && prec > size &&
+        prec > post_shift) {
       rtx t1 = NULL_RTX, t2 = NULL_RTX, t3 = NULL_RTX, result = NULL_RTX;
 
       start_sequence();
@@ -4373,7 +4388,6 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
                           OPTAB_DIRECT);
       }
       if (t3) {
-        /* QUOTIENT = ((OP0 + (ML * OP0) >> SIZE) >> POST_SHIFT */
         result = expand_shift(RSHIFT_EXPR, compute_mode, t3, post_shift,
                               NULL_RTX, 1);
       }
@@ -4397,7 +4411,6 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
     rtx this_result = strat_vec[i].result;
     rtx_insn *this_seq = strat_vec[i].seq;
     unsigned this_cost = seq_cost(this_seq, speed);
-
     if (this_cost < cost) {
       result = this_result;
       seq = this_seq;
