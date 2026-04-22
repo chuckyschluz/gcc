@@ -4263,13 +4263,6 @@ strategies will be re-evaluated with the pre-shift sequence.
 
 static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
                                   unsigned HOST_WIDE_INT d, int max_cost) {
-  auto emit_common_seq = [&] (scalar_int_mode mode, int shift) -> rtx {
-    rtx op0_p = shift > 0 ? expand_shift (RSHIFT_EXPR, int_mode, op0, shift,
-					  NULL_RTX, 1)
-			  : op0;
-    return op0_p ? convert_modes (mode, int_mode, op0_p, 1) : NULL_RTX;
-  };
-
   struct strat
   {
     rtx result;
@@ -4280,76 +4273,33 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
   auto_vec<strat> strat_vec;
 
   unsigned HOST_WIDE_INT ml;
-  int post_shift, pre_shift = 0;
+  int post_shift;
   unsigned HOST_WIDE_INT mh =
       choose_multiplier(d, size, size, &ml, &post_shift);
 
-  /* We can do better for even divisors using an initial right shift. */
-  if (mh && (d & 1) == 0) {
-    pre_shift = ctz_or_zero(d);
-    mh = choose_multiplier(d, size, size - pre_shift, &ml, &post_shift);
-    gcc_assert(!(mh && pre_shift));
-  }
-
-  /* Attempt the distributed multiply-highpart-shift sequence. */
-  {
-    rtx t1 = NULL_RTX, result = NULL_RTX;
-    start_sequence();
-    rtx op0_c = emit_common_seq(int_mode, pre_shift);
-    if (op0_c) {
-      t1 = expmed_mult_highpart(int_mode, op0_c, gen_int_mode(ml, int_mode),
-                                NULL_RTX, 1, MAX_COST);
-    }
-    if (mh) {
-      rtx t2 = NULL_RTX, t3 = NULL_RTX, t4 = NULL_RTX;
-      if (t1) {
-        t2 = expand_binop(int_mode, sub_optab, op0_c, t1, NULL_RTX, 1,
-                          OPTAB_DIRECT);
-      }
-      if (t2) {
-        t3 = expand_shift(RSHIFT_EXPR, int_mode, t2, 1, NULL_RTX, 1);
-      }
-      if (t3) {
-        t4 = expand_binop(int_mode, add_optab, t1, t3, NULL_RTX, 1,
-                          OPTAB_DIRECT);
-      }
-      if (t4 && prec > post_shift - 1) {
-        result =
-            expand_shift(RSHIFT_EXPR, int_mode, t4, post_shift - 1, target, 1);
-      }
-    } else {
-      if (t1 && prec > post_shift) {
-        result = expand_shift(RSHIFT_EXPR, int_mode, t1, post_shift, target, 1);
-      }
-    }
-    rtx_insn *seq = end_sequence();
-    if (result && seq) {
-      strat_vec.safe_push({result, seq});
-    }
-  }
-
   int ml_width = (ml == 0) ? 0 : (HOST_BITS_PER_WIDE_INT - clz_hwi(ml));
   int m_width = mh ? size + 1 : ml_width;
-  int op0_width = size - pre_shift;
+
+  bool can_preshift = mh && (d & 1) == 0;
 
   for (opt_scalar_int_mode mode_iter = GET_MODE_WIDER_MODE(int_mode);
        mode_iter.exists();
        mode_iter = GET_MODE_WIDER_MODE(mode_iter.require())) {
-    scalar_int_mode mode = mode_iter.require();
-    int prec = GET_MODE_PRECISION(mode);
+    scalar_int_mode compute_mode = mode_iter.require();
+    int prec = GET_MODE_PRECISION(compute_mode);
     if (prec > HOST_BITS_PER_WIDE_INT) {
       break;
     }
 
     /* Attempt the direct multiply-shift sequence. */
-    if (prec >= (m_width + op0_width) && prec > (size + post_shift)) {
+    if (prec >= (m_width + size) && prec > (size + post_shift)) {
       wide_int ml_wi = wi::zext(wi::uhwi(ml, prec), size);
       wide_int mh_wi = wi::lshift(wi::uhwi(mh, prec), size);
       wide_int m_wi = wi::bit_or(mh_wi, ml_wi);
       rtx t1 = NULL_RTX, result = NULL_RTX;
 
       start_sequence();
-      rtx op0_c = emit_common_seq(compute_mode, pre_shift);
+      rtx op0_c = convert_modes(compute_mode, int_mode, op0, 1);
       if (op0_c) {
         t1 = expand_binop(compute_mode, smul_optab, op0_c,
                           immed_wide_int_const(m_wi, compute_mode), NULL_RTX, 1,
@@ -4363,18 +4313,18 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
         convert_move(target, result, 1);
       }
       rtx_insn *seq = end_sequence();
-      if (result && seq) {
-        strat_vec.safe_push({result, seq});
+      if (target && seq) {
+        strat_vec.safe_push({target, seq});
       }
     }
 
     /* Attempt the distributed multiply-shift sequence if MH == 1. */
-    if (mh && prec >= (ml_width + op0_width) && prec > size &&
+    if (mh && !can_preshift && prec >= (ml_width + size) && prec > size &&
         prec > post_shift) {
       rtx t1 = NULL_RTX, t2 = NULL_RTX, t3 = NULL_RTX, result = NULL_RTX;
 
       start_sequence();
-      rtx op0_c = emit_common_seq(compute_mode, 0);
+      rtx op0_c = convert_modes(compute_mode, int_mode, op0, 1);
       if (op0_c) {
         t1 = expand_binop(compute_mode, smul_optab, op0_c,
                           gen_int_mode(ml, compute_mode), NULL_RTX, 1,
@@ -4395,9 +4345,60 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
         convert_move(target, result, 1);
       }
       rtx_insn *seq = end_sequence();
-      if (result && seq) {
-        strat_vec.safe_push({result, seq});
+      if (target && seq) {
+        strat_vec.safe_push({target, seq});
       }
+    }
+  }
+
+  /* We can do better for even divisors using an initial right shift. */
+  int pre_shift;
+  if (can_preshift) {
+    pre_shift = ctz_or_zero(d);
+    mh = choose_multiplier(d >> pre_shift, size, size - pre_shift, &ml,
+                           &post_shift);
+    gcc_assert(!(mh && pre_shift));
+  } else {
+    pre_shift = 0;
+  }
+
+  /* Attempt the distributed multiply-highpart-shift sequence. */
+  if (size > post_shift) {
+    rtx t1 = NULL_RTX, result = NULL_RTX;
+    start_sequence();
+    rtx op0_pre = pre_shift ? expand_shift(RSHIFT_EXPR, int_mode, op0,
+                                           pre_shift, NULL_RTX, 1)
+                            : op0;
+    if (op0_pre) {
+      t1 = expmed_mult_highpart(int_mode, op0_pre, gen_int_mode(ml, int_mode),
+                                NULL_RTX, 1, max_cost);
+    }
+    if (mh) {
+      gcc_assert(post_shift >= 1);
+      rtx t2 = NULL_RTX, t3 = NULL_RTX, t4 = NULL_RTX;
+      if (t1) {
+        t2 = expand_binop(int_mode, sub_optab, op0_pre, t1, NULL_RTX, 1,
+                          OPTAB_DIRECT);
+      }
+      if (t2) {
+        t3 = expand_shift(RSHIFT_EXPR, int_mode, t2, 1, NULL_RTX, 1);
+      }
+      if (t3) {
+        t4 = expand_binop(int_mode, add_optab, t1, t3, NULL_RTX, 1,
+                          OPTAB_DIRECT);
+      }
+      if (t4) {
+        result =
+            expand_shift(RSHIFT_EXPR, int_mode, t4, post_shift - 1, target, 1);
+      }
+    } else {
+      if (t1) {
+        result = expand_shift(RSHIFT_EXPR, int_mode, t1, post_shift, target, 1);
+      }
+    }
+    rtx_insn *seq = end_sequence();
+    if (result && seq) {
+      strat_vec.safe_push({result, seq});
     }
   }
 
@@ -4420,7 +4421,7 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
 
   if (seq) {
     emit_insn(seq);
-    return target;
+    return result;
   }
 
   return NULL_RTX;
