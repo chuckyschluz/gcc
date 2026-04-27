@@ -4280,7 +4280,7 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
   int ml_width = (ml == 0) ? 0 : (HOST_BITS_PER_WIDE_INT - clz_hwi(ml));
   int m_width = mh ? size + 1 : ml_width;
 
-  bool can_preshift = d & 1 == 0;
+  bool can_preshift = (d & 1) == 0;
 
   for (opt_scalar_int_mode mode_iter = GET_MODE_WIDER_MODE(int_mode);
        mode_iter.exists();
