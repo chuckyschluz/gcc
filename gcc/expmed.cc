@@ -4313,7 +4313,7 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
         convert_move(target, result, 1);
       }
       rtx_insn *seq = end_sequence();
-      if (target && seq) {
+      if (result && seq) {
         strat_vec.safe_push({target, seq});
       }
     }
@@ -4345,7 +4345,7 @@ static rtx expand_udiv_using_mult(rtx op0, rtx target, scalar_int_mode int_mode,
         convert_move(target, result, 1);
       }
       rtx_insn *seq = end_sequence();
-      if (target && seq) {
+      if (result && seq) {
         strat_vec.safe_push({target, seq});
       }
     }
